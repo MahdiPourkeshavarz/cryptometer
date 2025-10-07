@@ -6,17 +6,12 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { InjectRepository } from '@nestjs/typeorm';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import * as Parser from 'rss-parser';
-import { Article } from './entity/article.entity';
-import { Repository } from 'typeorm';
-
-export interface Articles {
-  headline: string;
-  summary: string;
-}
+import { Article, ArticleDocument } from './schema/article.schema';
 
 @Injectable()
 export class ScraperService {
@@ -24,8 +19,8 @@ export class ScraperService {
   private readonly rssParser = new Parser();
 
   constructor(
-    @InjectRepository(Article)
-    private readonly articleRepository: Repository<Article>,
+    @InjectModel(Article.name)
+    private readonly articleModel: Model<ArticleDocument>,
   ) {}
 
   @Cron(CronExpression.EVERY_2_HOURS)
@@ -36,13 +31,25 @@ export class ScraperService {
       { func: this.getMexcNews.bind(this), source: 'Mexc' },
       { func: this.getCryptoNews.bind(this), source: 'CryptoNews' },
       { func: this.getCointelegraphNews.bind(this), source: 'Cointelegraph' },
-      { func: this.getKucoinNews.bind(this), source: 'Kucoin' },
+      { func: this.getKucoinNewsViaHtml.bind(this), source: 'Kucoin' },
       { func: this.getCryptoSlateNews.bind(this), source: 'CryptoSlate' },
       { func: this.getCoinDeskNews.bind(this), source: 'CoinDesk' },
       { func: this.getCryptoPotatoNews.bind(this), source: 'CryptoPotato' },
       { func: this.getDailyCoinNews.bind(this), source: 'DailyCoin' },
       { func: this.getCoinGapeNews.bind(this), source: 'CoinGape' },
+      { func: this.getECryptoNews.bind(this), source: 'ECrypto' },
+      { func: this.getCoinSpeakerNews.bind(this), source: 'CoinSpeaker' },
       { func: this.getAltcoinBuzzNews.bind(this), source: 'AltcoinBuzz' },
+      {
+        func: this.getBlockchainReporterNews.bind(this),
+        source: 'BlockchainReporter',
+      },
+      { func: this.getCryptoCoinNews.bind(this), source: 'CryptoCoin' },
+      { func: this.getAMBCryptoNews.bind(this), source: 'AMB' },
+      {
+        func: this.getAltcoinInvestorsNews.bind(this),
+        source: 'AltcoinInvestors',
+      },
     ];
 
     const results = await Promise.allSettled(
@@ -54,54 +61,98 @@ export class ScraperService {
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
         this.logger.log(
-          `[Source ${scrapers[index].source}] Successfully scraped and processed ${result.value.length} articles.`,
+          `[Source ${scrapers[index].source}] Successfully scraped and saved ${result.value} new articles.`,
         );
       } else {
         this.logger.error(
           `[Source ${scrapers[index].source}] Failed:`,
-          result.reason,
+          result.reason.message,
         );
       }
     });
   }
 
+  private async saveArticles(articles: Partial<Article>[]): Promise<number> {
+    if (articles.length === 0) {
+      return 0;
+    }
+
+    const bulkOps = articles.map((article) => ({
+      updateOne: {
+        filter: {
+          $or: [
+            { url: article.url },
+            { headline: article.headline, source: article.source },
+          ],
+        },
+        update: { $setOnInsert: article },
+        upsert: true,
+      },
+    }));
+
+    try {
+      const result = await this.articleModel.bulkWrite(bulkOps);
+      const newArticlesCount = result.upsertedCount;
+
+      if (newArticlesCount > 0) {
+        this.logger.log(
+          `Saved ${newArticlesCount} new articles to the database.`,
+        );
+      }
+
+      return newArticlesCount;
+    } catch (error) {
+      if (error.code === 11000) {
+        this.logger.warn(
+          `Bulk write failed due to duplicate key, which is expected. No new articles were saved.`,
+        );
+        return 0;
+      }
+      this.logger.error('Error during bulk save operation:', error.stack);
+      throw error;
+    }
+  }
+
   private async getNewsFromRss(
     feedUrl: string,
     source: string,
-  ): Promise<Article[]> {
-    this.logger.log(
-      `Fetching news from RSS feed: ${feedUrl} (Source: ${source})`,
-    );
+  ): Promise<number> {
     try {
-      const feed = await this.rssParser.parseURL(feedUrl);
+      const { data: xmlData } = await axios.get(feedUrl, {
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+        },
+        timeout: 10000,
+      });
+
+      const feed = await this.rssParser.parseString(xmlData);
 
       if (!feed?.items?.length) {
         this.logger.warn(`No items found in RSS feed: ${feedUrl}`);
-        return [];
+        return 0;
       }
 
-      const articles = feed.items.map((item) =>
-        this.articleRepository.create({
-          headline: item.title || '',
-          summary: this.stripHtml(
-            item.contentSnippet ||
-              item['content:encoded'] ||
-              item.summary ||
-              '',
-          ),
-          source: source,
-          url: item.link || undefined,
-        }),
-      );
+      const articles: Partial<Article>[] = feed.items.map((item) => ({
+        headline: item.title || '',
+        summary: this.stripHtml(
+          item.contentSnippet || item['content:encoded'] || item.summary || '',
+        ),
+        source: source,
+        url: item.link || undefined,
+      }));
 
       return this.saveArticles(articles);
     } catch (error) {
-      this.logger.error(`Failed to parse RSS feed: ${feedUrl}`, error.stack);
+      this.logger.error(
+        `Failed to get or parse RSS feed: ${feedUrl}`,
+        error.message,
+      );
       throw new Error(`Failed to get news from RSS feed: ${feedUrl}`);
     }
   }
 
-  private async scrapeCointelegraphHtml(source: string): Promise<Article[]> {
+  private async scrapeCointelegraphHtml(source: string): Promise<number> {
     const url = 'https://cointelegraph.com/tags/altcoin';
     this.logger.log(`Scraping HTML from: ${url} (Source: ${source})`);
     try {
@@ -134,7 +185,7 @@ export class ScraperService {
         }
       });
 
-      return this.saveArticles(articles as Article[]);
+      return this.saveArticles(articles);
     } catch (error) {
       this.logger.error(
         `Error during Cointelegraph HTML scraping`,
@@ -144,7 +195,7 @@ export class ScraperService {
     }
   }
 
-  private async scrapeKucoinHtml(source: string): Promise<Article[]> {
+  private async scrapeKucoinHtml(source: string): Promise<number> {
     const url = 'https://www.kucoin.com/news/category/altcoin';
     this.logger.log(`Scraping HTML from: ${url} (Source: ${source})`);
     try {
@@ -174,99 +225,121 @@ export class ScraperService {
         }
       });
 
-      return this.saveArticles(articles as Article[]);
+      return this.saveArticles(articles);
     } catch (error) {
       this.logger.error(`Error during KuCoin HTML scraping`, error.stack);
       throw new Error('Failed to scrape the website.');
     }
   }
 
-  private async saveArticles(articles: Article[]): Promise<Article[]> {
-    const saved: Article[] = [];
-    for (const article of articles) {
-      try {
-        const existing = await this.articleRepository.findOne({
-          where: { headline: article.headline, source: article.source },
-        });
-        if (!existing) {
-          const savedArticle = await this.articleRepository.save(article);
-          saved.push(savedArticle);
-        } else {
-          this.logger.log(
-            `Skipping duplicate article: ${article.headline} from ${article.source}`,
-          );
-        }
-      } catch (error) {
-        this.logger.error(
-          `Failed to save article: ${article.headline}`,
-          error.stack,
-        );
-      }
-    }
-    return saved;
-  }
-
   private stripHtml(html: string): string {
     return html.replace(/<[^>]*>?/gm, '');
   }
 
-  public async getMexcNews(source: string = 'Mexc') {
+  public getMexcNews(source: string = 'Mexc') {
     return this.getNewsFromRss('https://blog.mexc.com/feed/', source);
   }
 
-  public async getCryptoNews(source: string = 'CryptoNews') {
+  public getCryptoNews(source: string = 'CryptoNews') {
     return this.getNewsFromRss('https://cryptonews.com/feed/', source);
   }
 
-  public async getCointelegraphNews(source: string = 'Cointelegraph') {
+  public getAltcoinBuzzNews(source: string = 'AltcoinBuzz') {
+    return this.getNewsFromRss('https://www.altcoinbuzz.io/feed/', source);
+  }
+
+  public getCointelegraphNews(source: string = 'Cointelegraph') {
     return this.getNewsFromRss(
-      'https://cointelegraph.com/tags/altcoin/feed',
+      'https://cointelegraph.com/rss/tag/altcoin',
       source,
     );
   }
 
-  public async getKucoinNews(source: string = 'Kucoin') {
+  public getKucoinNews(source: string = 'Kucoin') {
     return this.getNewsFromRss(
       'https://www.kucoin.com/rss/category/altcoin',
       source,
     );
   }
 
-  public async getCryptoSlateNews(source: string = 'CryptoSlate') {
+  public getCryptoSlateNews(source: string = 'CryptoSlate') {
     return this.getNewsFromRss('https://cryptoslate.com/news/feed/', source);
   }
 
-  public async getCoinDeskNews(source: string = 'CoinDesk') {
-    return this.getNewsFromRss('https://www.coindesk.com/feed/', source);
+  public getCoinDeskNews(source: string = 'CoinDesk') {
+    return this.getNewsFromRss(
+      'https://www.coindesk.com/arc/outboundfeeds/rss/',
+      source,
+    );
   }
 
-  public async getCryptoPotatoNews(source: string = 'CryptoPotato') {
+  public getCryptoPotatoNews(source: string = 'CryptoPotato') {
     return this.getNewsFromRss('https://cryptopotato.com/feed/', source);
   }
 
-  public async getDailyCoinNews(source: string = 'DailyCoin') {
+  public getCoinSpeakerNews(source: string = 'CoinSpeaker') {
+    return this.getNewsFromRss(
+      'https://www.coinspeaker.com/news/crypto/altcoins-news/feed/',
+      source,
+    );
+  }
+
+  public getDailyCoinNews(source: string = 'DailyCoin') {
     return this.getNewsFromRss('https://dailycoin.com/altcoins/feed/', source);
   }
 
-  public async getCoinGapeNews(source: string = 'CoinGape') {
+  public getCryptoCoinNews(source: string = 'CryptoCoin') {
+    return this.getNewsFromRss(
+      'https://cryptocoin.news/category/news/altcoin/feed/',
+      source,
+    );
+  }
+
+  public getBlockchainReporterNews(source: string = 'BlockchainReporter') {
+    return this.getNewsFromRss(
+      'https://blockchainreporter.net/altcoins/feed/',
+      source,
+    );
+  }
+
+  public getCoinGapeNews(source: string = 'CoinGape') {
     return this.getNewsFromRss(
       'https://coingape.com/category/news/altcoin-news/feed/',
       source,
     );
   }
 
-  public async getAltcoinBuzzNews(source: string = 'AltcoinBuzz') {
+  public getAltcoinInvestorsNews(source: string = 'AltcoinInvestors') {
     return this.getNewsFromRss(
-      'https://www.altcoinbuzz.io/cryptocurrency-news/feed/',
+      'https://altcoininvestor.com/latest/rss/',
       source,
     );
   }
 
-  public async getCointelegraphNewsViaHtml(source: string = 'Cointelegraph') {
+  public getECryptoNews(source: string = 'ECrypto') {
+    return this.getNewsFromRss(
+      'https://e-cryptonews.com/category/altcoin-news/feed/',
+      source,
+    );
+  }
+
+  public getAMBCryptoNews(source: string = 'AMB') {
+    return this.getNewsFromRss(
+      'https://ambcrypto.com/category/altcoins-news/feed/',
+      source,
+    );
+  }
+
+  public getCointelegraphNewsViaHtml(source: string = 'Cointelegraph') {
     return this.scrapeCointelegraphHtml(source);
   }
 
-  public async getKucoinNewsViaHtml(source: string = 'Kucoin') {
+  public getKucoinNewsViaHtml(source: string = 'Kucoin') {
     return this.scrapeKucoinHtml(source);
+  }
+
+  public async testRunAllScrapers() {
+    this.logger.log('🚀 Manually triggering scraping job for testing...');
+    await this.runAllScrapers();
   }
 }
