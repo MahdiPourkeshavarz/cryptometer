@@ -6,7 +6,8 @@ import { IndicatorModule } from './indicator/indicator.module';
 import { ProcessorModule } from './processor/processor.module';
 import { ScraperModule } from './scraper/scraper.module';
 import { ScheduleModule } from '@nestjs/schedule';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { MongooseConfigModule } from './mongoose/mongooseConfigModule';
+import { ConfigModule } from '@nestjs/config';
 
 @Module({
   imports: [
@@ -14,7 +15,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
     ProcessorModule,
     ScraperModule,
     ScheduleModule.forRoot(),
-    TypeOrmModule.forRoot({}),
+    MongooseConfigModule,
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
   ],
   controllers: [AppController],
   providers: [AppService],
