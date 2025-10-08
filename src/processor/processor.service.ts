@@ -1,21 +1,31 @@
 /* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
+/* eslint-disable @typescript-eslint/no-unsafe-return */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model } from 'mongoose';
-import { ChatOpenAI } from '@langchain/openai';
 import { PromptTemplate } from '@langchain/core/prompts';
-import { JsonOutputFunctionsParser } from 'langchain/output_parsers';
+import { JsonOutputToolsParser } from 'langchain/output_parsers';
 import { Article, ArticleDocument } from 'src/scraper/schema/article.schema';
 import { MarketPulse, MarketPulseDocument } from './schema/market-pulse.schema';
 import { ConfigService } from '@nestjs/config';
+import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@nestjs/axios';
+import { EnrichedMarketPulseDto } from './dto/enriched-market-pulse.dto';
+import { Crypto, SearchResult } from './dto/crypto.dto';
+import { ChatGroq } from '@langchain/groq';
 
 @Injectable()
 export class ProcessorService {
   private readonly logger = new Logger(ProcessorService.name);
-  private readonly llm: ChatOpenAI;
+  private readonly llm: ChatGroq;
+  private readonly baseUrl = 'https://api.coingecko.com/api/v3';
+  private readonly apiKey: string;
 
   constructor(
     @InjectModel(Article.name)
@@ -23,15 +33,17 @@ export class ProcessorService {
     @InjectModel(MarketPulse.name)
     private readonly pulseModel: Model<MarketPulseDocument>,
     private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
   ) {
-    this.llm = new ChatOpenAI({
-      apiKey: configService.get<string>('OPENAI_API_KEY'),
-      model: 'gpt-4o-mini',
+    this.llm = new ChatGroq({
+      apiKey: configService.get<string>('GROQ_API_KEY'),
+      model: 'llama-3.3-70b-versatile',
       temperature: 0,
     });
+    this.apiKey = this.configService.get<string>('COINGECKO_API_KEY') as string;
   }
 
-  @Cron(CronExpression.EVERY_2_HOURS)
+  @Cron(CronExpression.EVERY_HOUR)
   async processDailyArticles() {
     this.logger.log('🤖 Starting Hype & FUD processing job...');
 
@@ -44,6 +56,8 @@ export class ProcessorService {
 
       const articles = await this.articleModel
         .find({ createdAt: { $gte: twentyFourHoursAgo } })
+        .sort({ createdAt: -1 })
+        .limit(120)
         .exec();
 
       if (articles.length < 5) {
@@ -64,7 +78,7 @@ export class ProcessorService {
         )
         .join('\n---\n');
 
-      const parser = new JsonOutputFunctionsParser();
+      const parser = new JsonOutputToolsParser();
 
       const prompt = PromptTemplate.fromTemplate(
         `You are a meticulous crypto analyst bot. Your task is to calculate "Hype" and "FUD" scores for cryptocurrencies based on a strict set of rules applied to the provided articles.
@@ -98,78 +112,94 @@ export class ProcessorService {
         `,
       );
 
-      const functionCallingModel = this.llm.bind({
-        functions: [
+      const toolCallingModel = this.llm.bind({
+        tools: [
           {
-            name: 'hype_fud_output',
-            description: 'Formats the Hype and FUD analysis.',
-            parameters: {
-              type: 'object',
-              properties: {
-                hype: {
-                  type: 'array',
-                  description: 'The top 2 hyped cryptocurrencies.',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      name: {
-                        type: 'string',
-                        description: 'Name of the cryptocurrency.',
+            type: 'function',
+            function: {
+              name: 'hype_fud_output',
+              description: 'Formats the Hype and FUD analysis.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  hype: {
+                    type: 'array',
+                    description: 'The top 2 hyped cryptocurrencies.',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        name: {
+                          type: 'string',
+                          description: 'Name of the cryptocurrency.',
+                        },
+                        score: {
+                          type: 'number',
+                          description: 'Hype score from 1-100.',
+                        },
+                        reasoning: {
+                          type: 'string',
+                          description: 'Brief reason for the score.',
+                        },
                       },
-                      score: {
-                        type: 'number',
-                        description: 'Hype score from 1-100.',
-                      },
-                      reasoning: {
-                        type: 'string',
-                        description: 'Brief reason for the score.',
-                      },
+                      required: ['name', 'score', 'reasoning'],
                     },
-                    required: ['name', 'score', 'reasoning'],
+                  },
+                  fud: {
+                    type: 'array',
+                    description:
+                      'The top 2 cryptocurrencies with the most FUD.',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        name: {
+                          type: 'string',
+                          description: 'Name of the cryptocurrency.',
+                        },
+                        score: {
+                          type: 'number',
+                          description: 'FUD score from 1-100.',
+                        },
+                        reasoning: {
+                          type: 'string',
+                          description: 'Brief reason for the score.',
+                        },
+                      },
+                      required: ['name', 'score', 'reasoning'],
+                    },
                   },
                 },
-                fud: {
-                  type: 'array',
-                  description: 'The top 2 cryptocurrencies with the most FUD.',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      name: {
-                        type: 'string',
-                        description: 'Name of the cryptocurrency.',
-                      },
-                      score: {
-                        type: 'number',
-                        description: 'FUD score from 1-100.',
-                      },
-                      reasoning: {
-                        type: 'string',
-                        description: 'Brief reason for the score.',
-                      },
-                    },
-                    required: ['name', 'score', 'reasoning'],
-                  },
-                },
+                required: ['hype', 'fud'],
               },
-              required: ['hype', 'fud'],
             },
           },
         ],
-        function_call: { name: 'hype_fud_output' },
+        // This forces the model to call the specified tool, similar to function_call
+        tool_choice: {
+          type: 'function',
+          function: { name: 'hype_fud_output' },
+        },
       });
 
-      const chain = prompt.pipe(functionCallingModel).pipe(parser);
+      const chain = prompt.pipe(toolCallingModel).pipe(parser);
 
       const pulseResult: any = await chain.invoke({
         date: dateString,
         articles_context: articlesContext,
       });
 
-      await this.pulseModel.create({
-        date: dateString,
-        hype: pulseResult.hype,
-        fud: pulseResult.fud,
-      });
+      await this.pulseModel.findOneAndUpdate(
+        { date: dateString },
+        {
+          $set: {
+            hype: pulseResult[0].args.hype,
+            fud: pulseResult[0].args.fud,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+        },
+      );
 
       this.logger.log(
         `✅ Successfully processed and saved Hype/FUD analysis for ${dateString}.`,
@@ -179,7 +209,164 @@ export class ProcessorService {
     }
   }
 
-  async getLatestMarketPulse(): Promise<MarketPulse[] | null> {
-    return this.pulseModel.find().sort({ date: -1 }).limit(7).exec();
+  private async getCoinById(id: string): Promise<Crypto> {
+    const url = `${this.baseUrl}/coins/markets`;
+    const params = {
+      vs_currency: 'usd',
+      ids: id,
+      x_cg_demo_api_key: this.apiKey,
+    };
+
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.get<Crypto[]>(url, { params }),
+      );
+
+      if (!data || data.length === 0) {
+        throw new NotFoundException(
+          `Cryptocurrency with ID "${id}" not found.`,
+        );
+      }
+
+      return data[0];
+    } catch (error) {
+      console.error(`Error fetching coin by ID (${id}):`, error.message);
+      if (error instanceof NotFoundException) throw error;
+      throw new Error('Failed to fetch cryptocurrency data.');
+    }
+  }
+
+  async searchCoins(query: string): Promise<SearchResult | null> {
+    if (!query || query.trim() === '') {
+      return null;
+    }
+
+    const url = `${this.baseUrl}/search`;
+    const params = {
+      query,
+      x_cg_demo_api_key: this.apiKey,
+    };
+
+    try {
+      const { data } = await firstValueFrom(
+        this.httpService.get<{ coins: SearchResult[] }>(url, { params }),
+      );
+
+      if (!data.coins || data.coins.length === 0) {
+        this.logger.warn(`CoinGecko search found no results for: "${query}"`);
+        return null; // Return null gracefully
+      }
+
+      return data.coins[0];
+    } catch (error) {
+      console.error(`Error searching for coins (${query}):`, error.message);
+      return null;
+      throw new Error('Failed to perform cryptocurrency search.');
+    }
+  }
+
+  async getLatestEnrichedMarketPulse(): Promise<EnrichedMarketPulseDto | null> {
+    // 1. Fetch the single most recent pulse from the database
+    const latestPulse = (await this.pulseModel
+      .findOne()
+      .sort({ createdAt: -1 }) // Use createdAt to get the true latest
+      .exec()) as MarketPulseDocument;
+
+    if (!latestPulse) {
+      this.logger.warn('No market pulse found in the database.');
+      return null;
+    }
+
+    // 2. Collect all unique cryptocurrency NAMES
+    const allEntries = [...latestPulse.hype, ...latestPulse.fud];
+    const uniqueCryptoNames = [
+      ...new Set(allEntries.map((entry) => entry.name)),
+    ];
+
+    if (uniqueCryptoNames.length === 0) {
+      return {
+        _id: latestPulse._id.toString(),
+        date: latestPulse.date,
+        createdAt: latestPulse.createdAt.toISOString(),
+        hype: latestPulse.hype,
+        fud: latestPulse.fud,
+      };
+    }
+
+    this.logger.log(`Searching for IDs for: ${uniqueCryptoNames.join(', ')}`);
+    const searchPromises = uniqueCryptoNames.map((name) =>
+      this.searchCoins(name).then((res) =>
+        res ? { ...res, queryName: name } : null,
+      ),
+    );
+    const searchResults = await Promise.all(searchPromises);
+
+    // Build a map from the original query name -> search result (if any)
+    const queryToSearchResult = new Map<
+      string,
+      { id: string; name: string; queryName: string }
+    >();
+    searchResults.forEach((sr) => {
+      if (sr && sr.queryName) queryToSearchResult.set(sr.queryName, sr);
+    });
+
+    // Collect unique CoinGecko IDs we actually found
+    const cryptoIds = Array.from(
+      new Set(Array.from(queryToSearchResult.values()).map((sr) => sr.id)),
+    );
+
+    if (cryptoIds.length === 0) {
+      this.logger.warn('Could not find IDs for any of the crypto names.');
+      return {
+        _id: latestPulse._id.toString(),
+        date: latestPulse.date,
+        createdAt: latestPulse.createdAt.toISOString(),
+        hype: latestPulse.hype,
+        fud: latestPulse.fud,
+      };
+    }
+
+    // 2) Fetch Phase: get market data by ID and build id -> crypto map
+    this.logger.log(`Fetching market data for IDs: ${cryptoIds.join(', ')}`);
+    const marketDataPromises = cryptoIds.map((id) => this.getCoinById(id));
+    const marketDataResults = await Promise.all(marketDataPromises);
+    const validMarketData = marketDataResults.filter(
+      (d) => d !== null,
+    ) as Crypto[];
+
+    const idToCrypto = new Map<string, Crypto>();
+    validMarketData.forEach((c) => idToCrypto.set(c.id, c));
+
+    // 3) Enrich entries using the original query -> id map, then id -> crypto map
+    const enrich = (entry) => {
+      const sr = queryToSearchResult.get(entry.name); // entry.name is what was in the pulse (e.g. "DOGE")
+      if (!sr) {
+        // no search result for this original name
+        this.logger.warn(
+          `CoinGecko search found no results for: "${entry.name}"`,
+        );
+        return { ...entry, marketData: null };
+      }
+
+      const crypto = idToCrypto.get(sr.id) || null;
+      if (!crypto) {
+        this.logger.warn(
+          `Found ID (${sr.id}) for "${entry.name}" but market fetch returned no data.`,
+        );
+      }
+      return { ...entry, marketData: crypto };
+    };
+
+    const enrichedHype = latestPulse.hype.map((e) => enrich(e));
+    const enrichedFud = latestPulse.fud.map((e) => enrich(e));
+
+    // 7. Return the final, combined DTO
+    return {
+      _id: latestPulse._id.toString(),
+      date: latestPulse.date,
+      createdAt: latestPulse.createdAt.toISOString(),
+      hype: enrichedHype,
+      fud: enrichedFud,
+    };
   }
 }

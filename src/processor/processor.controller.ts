@@ -8,6 +8,6 @@ export class ProcessorController {
 
   @Get('pulse')
   async getLatestMarketPulse() {
-    return this.processorService.getLatestMarketPulse();
+    return this.processorService.getLatestEnrichedMarketPulse();
   }
 }

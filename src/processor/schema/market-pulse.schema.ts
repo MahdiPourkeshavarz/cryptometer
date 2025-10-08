@@ -1,7 +1,10 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 class ScoreEntry {
+  toObject(): any {
+    throw new Error('Method not implemented.');
+  }
   @Prop({ required: true })
   name: string;
 
@@ -12,7 +15,10 @@ class ScoreEntry {
   reasoning: string;
 }
 
-export type MarketPulseDocument = MarketPulse & Document;
+export type MarketPulseDocument = MarketPulse &
+  Document & {
+    toObject: () => MarketPulse;
+  };
 
 @Schema({ timestamps: true })
 export class MarketPulse {
@@ -24,6 +30,11 @@ export class MarketPulse {
 
   @Prop({ type: [ScoreEntry] })
   fud: ScoreEntry[];
+
+  _id: Types.ObjectId;
+
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export const MarketPulseSchema = SchemaFactory.createForClass(MarketPulse);

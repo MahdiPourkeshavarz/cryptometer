@@ -23,7 +23,7 @@ export class ScraperService {
     private readonly articleModel: Model<ArticleDocument>,
   ) {}
 
-  @Cron(CronExpression.EVERY_2_HOURS)
+  @Cron(CronExpression.EVERY_HOUR)
   async runAllScrapers() {
     this.logger.log('🚀 Starting scheduled scraping job...');
 
