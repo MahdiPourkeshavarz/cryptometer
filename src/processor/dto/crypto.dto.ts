@@ -15,6 +15,7 @@ export class Crypto {
   circulating_supply: number;
   total_supply: number;
   last_updated: string;
+  large: string;
 }
 
 export interface SearchResult {

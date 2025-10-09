@@ -43,7 +43,7 @@ export class ProcessorService {
     this.apiKey = this.configService.get<string>('COINGECKO_API_KEY') as string;
   }
 
-  @Cron(CronExpression.EVERY_HOUR)
+  @Cron(CronExpression.EVERY_2_HOURS)
   async processDailyArticles() {
     this.logger.log('🤖 Starting Hype & FUD processing job...');
 
@@ -57,7 +57,7 @@ export class ProcessorService {
       const articles = await this.articleModel
         .find({ createdAt: { $gte: twentyFourHoursAgo } })
         .sort({ createdAt: -1 })
-        .limit(120)
+        .limit(124)
         .exec();
 
       if (articles.length < 5) {
@@ -260,7 +260,6 @@ export class ProcessorService {
       return data.coins[0];
     } catch (error) {
       console.error(`Error searching for coins (${query}):`, error.message);
-      return null;
       throw new Error('Failed to perform cryptocurrency search.');
     }
   }
@@ -304,7 +303,7 @@ export class ProcessorService {
     // Build a map from the original query name -> search result (if any)
     const queryToSearchResult = new Map<
       string,
-      { id: string; name: string; queryName: string }
+      { id: string; name: string; queryName: string; large: string }
     >();
     searchResults.forEach((sr) => {
       if (sr && sr.queryName) queryToSearchResult.set(sr.queryName, sr);
@@ -354,7 +353,13 @@ export class ProcessorService {
           `Found ID (${sr.id}) for "${entry.name}" but market fetch returned no data.`,
         );
       }
-      return { ...entry, marketData: crypto };
+
+      const finalMarketData = {
+        ...crypto,
+        large: sr.large,
+      };
+
+      return { ...entry, marketData: finalMarketData };
     };
 
     const enrichedHype = latestPulse.hype.map((e) => enrich(e));
