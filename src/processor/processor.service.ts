@@ -5,7 +5,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model } from 'mongoose';
@@ -209,11 +209,17 @@ export class ProcessorService {
     }
   }
 
-  private async getCoinById(id: string): Promise<Crypto> {
+  private async getCoinsMarketData(
+    ids: string[],
+  ): Promise<Map<string, Crypto>> {
+    if (ids.length === 0) {
+      return new Map();
+    }
+
     const url = `${this.baseUrl}/coins/markets`;
     const params = {
       vs_currency: 'usd',
-      ids: id,
+      ids: ids.join(','), // Join the IDs into a single comma-separated string
       x_cg_demo_api_key: this.apiKey,
     };
 
@@ -222,17 +228,18 @@ export class ProcessorService {
         this.httpService.get<Crypto[]>(url, { params }),
       );
 
-      if (!data || data.length === 0) {
-        throw new NotFoundException(
-          `Cryptocurrency with ID "${id}" not found.`,
-        );
+      // Convert the array of results into a Map for easy lookups (id -> Crypto data)
+      const cryptoMap = new Map<string, Crypto>();
+      if (data) {
+        data.forEach((coin) => cryptoMap.set(coin.id, coin));
       }
-
-      return data[0];
+      return cryptoMap;
     } catch (error) {
-      console.error(`Error fetching coin by ID (${id}):`, error.message);
-      if (error instanceof NotFoundException) throw error;
-      throw new Error('Failed to fetch cryptocurrency data.');
+      this.logger.error(
+        `Error fetching market data for IDs (${ids.join(', ')}):`,
+        error.message,
+      );
+      throw new Error('Failed to fetch cryptocurrency market data.');
     }
   }
 
@@ -327,14 +334,8 @@ export class ProcessorService {
 
     // 2) Fetch Phase: get market data by ID and build id -> crypto map
     this.logger.log(`Fetching market data for IDs: ${cryptoIds.join(', ')}`);
-    const marketDataPromises = cryptoIds.map((id) => this.getCoinById(id));
-    const marketDataResults = await Promise.all(marketDataPromises);
-    const validMarketData = marketDataResults.filter(
-      (d) => d !== null,
-    ) as Crypto[];
 
-    const idToCrypto = new Map<string, Crypto>();
-    validMarketData.forEach((c) => idToCrypto.set(c.id, c));
+    const idToCrypto = await this.getCoinsMarketData(cryptoIds);
 
     // 3) Enrich entries using the original query -> id map, then id -> crypto map
     const enrich = (entry) => {
