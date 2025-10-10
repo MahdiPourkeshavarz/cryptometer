@@ -8,6 +8,7 @@ import { ScraperModule } from './scraper/scraper.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { MongooseConfigModule } from './mongoose/mongooseConfigModule';
 import { ConfigModule } from '@nestjs/config';
+import { CacheModule } from '@nestjs/cache-manager';
 
 @Module({
   imports: [
@@ -18,6 +19,10 @@ import { ConfigModule } from '@nestjs/config';
     MongooseConfigModule,
     ConfigModule.forRoot({
       isGlobal: true,
+    }),
+    CacheModule.register({
+      isGlobal: true,
+      ttl: 180 * 1000,
     }),
   ],
   controllers: [AppController],

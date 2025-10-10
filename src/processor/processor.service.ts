@@ -1,11 +1,12 @@
 /* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/restrict-template-expressions */
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model } from 'mongoose';
@@ -19,6 +20,8 @@ import { HttpService } from '@nestjs/axios';
 import { EnrichedMarketPulseDto } from './dto/enriched-market-pulse.dto';
 import { Crypto, SearchResult } from './dto/crypto.dto';
 import { ChatGroq } from '@langchain/groq';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class ProcessorService {
@@ -34,6 +37,7 @@ export class ProcessorService {
     private readonly pulseModel: Model<MarketPulseDocument>,
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {
     this.llm = new ChatGroq({
       apiKey: configService.get<string>('GROQ_API_KEY'),
@@ -216,6 +220,15 @@ export class ProcessorService {
       return new Map();
     }
 
+    const cacheKey = `cryptos-${ids}`;
+
+    const cached = (await this.cacheManager.get(cacheKey)) as Map<
+      string,
+      Crypto
+    >;
+
+    if (cached) return cached;
+
     const url = `${this.baseUrl}/coins/markets`;
     const params = {
       vs_currency: 'usd',
@@ -233,6 +246,9 @@ export class ProcessorService {
       if (data) {
         data.forEach((coin) => cryptoMap.set(coin.id, coin));
       }
+
+      await this.cacheManager.set(cacheKey, cryptoMap, 240 * 1000);
+
       return cryptoMap;
     } catch (error) {
       this.logger.error(
