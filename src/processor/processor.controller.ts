@@ -10,4 +10,9 @@ export class ProcessorController {
   async getLatestMarketPulse() {
     return this.processorService.getLatestEnrichedMarketPulse();
   }
+
+  @Get('insight')
+  async getWeeklyInsight() {
+    return this.processorService.getLatestEnrichedWeeklyInsight();
+  }
 }

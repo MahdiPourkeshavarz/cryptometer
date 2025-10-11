@@ -1,4 +1,5 @@
 /* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/no-require-imports */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
@@ -10,8 +11,9 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import * as Parser from 'rss-parser';
 import { Article, ArticleDocument } from './schema/article.schema';
+
+import Parser = require('rss-parser');
 
 @Injectable()
 export class ScraperService {
