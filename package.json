@@ -33,18 +33,15 @@
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/schedule": "^6.0.1",
     "axios": "^1.12.2",
-    "axios-retry": "^4.5.0",
     "cache-manager": "^7.2.4",
     "cheerio": "^1.1.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "langchain": "^0.3.35",
     "mongoose": "^8.19.1",
-    "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
     "rss-parser": "^3.13.0",
-    "rxjs": "^7.8.1",
-    "uuid": "^13.0.0"
+    "rxjs": "^7.8.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
