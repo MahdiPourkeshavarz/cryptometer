@@ -19,14 +19,14 @@ import { firstValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { EnrichedMarketPulseDto } from './dto/enriched-market-pulse.dto';
 import { Crypto, SearchResult } from './dto/crypto.dto';
-import { ChatGroq } from '@langchain/groq';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { ChatOpenAI } from '@langchain/openai';
 
 @Injectable()
 export class ProcessorService {
   private readonly logger = new Logger(ProcessorService.name);
-  private readonly llm: ChatGroq;
+  private readonly llm: ChatOpenAI;
   private readonly baseUrl = 'https://api.coingecko.com/api/v3';
   private readonly apiKey: string;
 
@@ -39,15 +39,15 @@ export class ProcessorService {
     private readonly httpService: HttpService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
   ) {
-    this.llm = new ChatGroq({
-      apiKey: configService.get<string>('GROQ_API_KEY'),
-      model: 'llama-3.3-70b-versatile',
+    this.llm = new ChatOpenAI({
+      apiKey: configService.get<string>('OPENAI_API_KEY'),
+      model: 'gpt-4o-mini',
       temperature: 0,
     });
     this.apiKey = this.configService.get<string>('COINGECKO_API_KEY') as string;
   }
 
-  @Cron(CronExpression.EVERY_2_HOURS)
+  @Cron(CronExpression.EVERY_MINUTE)
   async processDailyArticles() {
     this.logger.log('🤖 Starting Hype & FUD processing job...');
 
@@ -85,29 +85,31 @@ export class ProcessorService {
       const parser = new JsonOutputToolsParser();
 
       const prompt = PromptTemplate.fromTemplate(
-        `You are a meticulous crypto analyst bot. Your task is to calculate "Hype" and "FUD" scores for cryptocurrencies based on a strict set of rules applied to the provided articles.
+        `**Persona:** You are an expert crypto market analyst.
 
-        **Instructions:**
-        1. First, identify all unique cryptocurrency names mentioned across all articles.
-        2. For each unique cryptocurrency, calculate its Hype and FUD scores by meticulously applying the following rules to every article.
+        **Primary Goal:** Analyze the provided news articles to identify the top 2 "Hype" and top 2 "FUD" cryptocurrencies. You must calculate scores based on the strict rules below and provide a concise, insightful reason for each score.
 
-        **Hype Scoring Rules:**
-        - **+3 points:** if the crypto name appears in an article's **title**.
-        - **+2 points:** if the crypto name appears in an article's **summary**.
-        - **+1 point bonus:** for each crypto mentioned in an article if that article's overall sentiment is over 80% positive.
+        **Scoring Algorithm (Apply meticulously):**
 
-        **FUD Scoring Rules:**
-        - **+3 points:** for a crypto if it is in a **title** with negative sentiment.
-        - **+2 points:** for a crypto if it is in a **summary** with negative sentiment.
-        - **+1 point bonus:** for each crypto mentioned in an article if that article's overall sentiment is over 80% negative.
+        **Hype Points:**
+        - **+3:** For each mention in a **title**.
+        - **+2:** For each mention in a **summary**.
+        - **+1:** If the article has an overall sentiment score > 80% positive.
 
-        **Final Bonus Point Rules (Apply After Scoring All Articles):**
-        - **+7 Hype bonus:** if a crypto was a candidate for hype of the day and it was'nt in top ten in market rank.
-        - **+5 Hype bonus:** if a crypto appears in more than 4 articles in total.
-        - **+5 FUD bonus:** if a crypto appears in more than 3 articles that have an overall negative sentiment.
+        **FUD Points:**
+        - **+3:** If mentioned in a **title** with negative sentiment.
+        - **+2:** If mentioned in a **summary** with negative sentiment.
+        - **+1:** If the article has an overall sentiment score > 80% negative.
 
-        3. After calculating the final scores for ALL cryptocurrencies, identify the top 2 for Hype and the top 2 for FUD.
-        4. Return ONLY the final top 2 lists in the required JSON format.
+        **Global Bonuses (Apply once per crypto after analyzing all articles):**
+        - **+5 Hype Bonus:** If mentioned in more than 4 articles total.
+        - **+5 FUD Bonus:** If mentioned in more than 3 articles with negative sentiment.
+        - **+7 Hype Bonus:** If it is a low market-cap coin (i.e., not Bitcoin or Ethereum) receiving significant attention.
+
+        **Output Instructions:**
+        1.  After calculating all scores, determine the top 2 for Hype and top 2 for FUD.
+        2.  For each of the top coins, provide an insightful, one-sentence **reasoning** that summarizes *why* it scored high, referencing key themes from the news (e.g., "High score driven by recurring positive mentions of its mainnet upgrade.").
+        3.  Return your final analysis ONLY in the required JSON format.
 
         **ARTICLES FOR ANALYSIS:**
         ---
@@ -128,21 +130,15 @@ export class ProcessorService {
                 properties: {
                   hype: {
                     type: 'array',
-                    description: 'The top 2 hyped cryptocurrencies.',
                     items: {
                       type: 'object',
                       properties: {
-                        name: {
-                          type: 'string',
-                          description: 'Name of the cryptocurrency.',
-                        },
-                        score: {
-                          type: 'number',
-                          description: 'Hype score from 1-100.',
-                        },
+                        name: { type: 'string' },
+                        score: { type: 'number' },
                         reasoning: {
                           type: 'string',
-                          description: 'Brief reason for the score.',
+                          description:
+                            'Insightful one-sentence reason for the score.',
                         },
                       },
                       required: ['name', 'score', 'reasoning'],
@@ -150,22 +146,15 @@ export class ProcessorService {
                   },
                   fud: {
                     type: 'array',
-                    description:
-                      'The top 2 cryptocurrencies with the most FUD.',
                     items: {
                       type: 'object',
                       properties: {
-                        name: {
-                          type: 'string',
-                          description: 'Name of the cryptocurrency.',
-                        },
-                        score: {
-                          type: 'number',
-                          description: 'FUD score from 1-100.',
-                        },
+                        name: { type: 'string' },
+                        score: { type: 'number' },
                         reasoning: {
                           type: 'string',
-                          description: 'Brief reason for the score.',
+                          description:
+                            'Insightful one-sentence reason for the score.',
                         },
                       },
                       required: ['name', 'score', 'reasoning'],
@@ -177,24 +166,26 @@ export class ProcessorService {
             },
           },
         ],
-        // This forces the model to call the specified tool, similar to function_call
+        // This forces the model to use our defined tool
         tool_choice: {
           type: 'function',
           function: { name: 'hype_fud_output' },
         },
       });
 
+      // 4. Create the chain with the tool-calling model
       const chain = prompt.pipe(toolCallingModel).pipe(parser);
 
       const pulseResult: any = await chain.invoke({
-        date: dateString,
         articles_context: articlesContext,
       });
 
+      // 5. Update the save logic to handle the tool-calling output format
       await this.pulseModel.findOneAndUpdate(
         { date: dateString },
         {
           $set: {
+            // The result is now nested inside the first tool call's arguments
             hype: pulseResult[0].args.hype,
             fud: pulseResult[0].args.fud,
           },
