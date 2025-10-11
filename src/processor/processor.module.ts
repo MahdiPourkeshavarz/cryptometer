@@ -7,6 +7,10 @@ import { MarketPulse, MarketPulseSchema } from './schema/market-pulse.schema';
 import { ConfigModule } from '@nestjs/config';
 import { ProcessorController } from './processor.controller';
 import { HttpModule } from '@nestjs/axios';
+import {
+  WeeklyInsight,
+  WeeklyInsightSchema,
+} from './schema/weekly-insight.schema';
 
 @Module({
   imports: [
@@ -15,6 +19,7 @@ import { HttpModule } from '@nestjs/axios';
     MongooseModule.forFeature([
       { name: Article.name, schema: ArticleSchema },
       { name: MarketPulse.name, schema: MarketPulseSchema },
+      { name: WeeklyInsight.name, schema: WeeklyInsightSchema },
     ]),
   ],
   providers: [ProcessorService],

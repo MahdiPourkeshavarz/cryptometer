@@ -22,11 +22,19 @@ import { Crypto, SearchResult } from './dto/crypto.dto';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { ChatOpenAI } from '@langchain/openai';
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
+import {
+  WeeklyInsight,
+  WeeklyInsightDocument,
+} from './schema/weekly-insight.schema';
+import { EnrichedWeeklyInsightDto } from './dto/enriched-weekly-insight.dto';
+import { JsonOutputParser } from '@langchain/core/output_parsers';
 
 @Injectable()
 export class ProcessorService {
   private readonly logger = new Logger(ProcessorService.name);
   private readonly llm: ChatOpenAI;
+  private readonly weeklyInsightLlm: ChatGoogleGenerativeAI;
   private readonly baseUrl = 'https://api.coingecko.com/api/v3';
   private readonly apiKey: string;
 
@@ -38,16 +46,23 @@ export class ProcessorService {
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    @InjectModel(WeeklyInsight.name)
+    private readonly weeklyInsightModel: Model<WeeklyInsightDocument>,
   ) {
     this.llm = new ChatOpenAI({
       apiKey: configService.get<string>('OPENAI_API_KEY'),
       model: 'gpt-4o-mini',
       temperature: 0,
     });
+    this.weeklyInsightLlm = new ChatGoogleGenerativeAI({
+      apiKey: configService.get<string>('GOOGLE_API_KEY'),
+      model: 'gemini-2.0-flash',
+      temperature: 0.1,
+    });
     this.apiKey = this.configService.get<string>('COINGECKO_API_KEY') as string;
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
+  @Cron(CronExpression.EVERY_2_HOURS)
   async processDailyArticles() {
     this.logger.log('🤖 Starting Hype & FUD processing job...');
 
@@ -201,6 +216,100 @@ export class ProcessorService {
       );
     } catch (error) {
       this.logger.error('Failed to process Hype & FUD analysis:', error.stack);
+    }
+  }
+
+  @Cron('0 0 * * 0') // Every Sunday at midnight
+  async processWeeklyInsights() {
+    this.logger.log('🤖 Starting Weekly Insights processing job...');
+
+    const today = new Date();
+    const weekEndString = today.toISOString().split('T')[0];
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const weekStartString = sevenDaysAgo.toISOString().split('T')[0];
+
+    try {
+      const articles = await this.articleModel
+        .find({ createdAt: { $gte: sevenDaysAgo } })
+        .sort({ createdAt: -1 })
+        .exec();
+
+      if (articles.length < 20) {
+        this.logger.log(
+          'Not enough articles to process for a meaningful weekly analysis.',
+        );
+        return;
+      }
+
+      this.logger.log(
+        `Found ${articles.length} articles to analyze for week ${weekStartString} to ${weekEndString}...`,
+      );
+
+      const articlesContext = articles
+        .map(
+          (a) =>
+            `Source: ${a.source}\nHeadline: ${a.headline}\nSummary: ${a.summary}`,
+        )
+        .join('\n---\n');
+
+      const prompt = PromptTemplate.fromTemplate(
+        `**Persona:** You are an expert crypto market analyst specializing in weekly overviews.
+
+        **Primary Goal:** Analyze the provided news articles from the past week to generate insightful weekly summaries. Identify top trends, emerging coins, and other key insights based on aggregated data. Refine scoring criteria as needed for depth.
+
+        **Scoring Algorithm (Apply meticulously, edit/improve as criteria evolve):**
+
+        **Trend/Emerging Points (Example - Refine):**
+        - **+4:** For recurring themes across multiple sources.
+        - **+3:** For mentions in titles/summaries with high impact.
+        - **+2:** For positive/negative sentiment clusters.
+        - **+1:** For article volume on the topic.
+
+        **Global Bonuses (Apply once per item after analyzing all articles):**
+        - **+10 Bonus:** For sudden spikes in mentions (e.g., >10 articles).
+        - **+7 Bonus:** For low-cap or new coins gaining traction.
+        - **+5 Bonus:** For cross-source validation.
+
+        **Output Instructions:**
+        1.  After analysis, determine top 2 trends and top 2 emerging coins (expand as criteria refine).
+        2.  For each, provide an insightful, one-sentence **reasoning** summarizing key weekly developments.
+        3.  Return your final analysis ONLY as valid JSON in this exact format (no code blocks, no extra text):
+        {{"topTrends": [{{"name": "Trend Name", "score": 50, "reasoning": "One-sentence reason."}}, ...], "emergingCoins": [{{"name": "Coin Name", "score": 50, "reasoning": "One-sentence reason."}}, ...]}}
+
+        **ARTICLES FOR ANALYSIS (Past Week):**
+        ---
+        {articles_context}
+        ---
+        `,
+      );
+
+      const parser = new JsonOutputParser();
+
+      const chain = prompt.pipe(this.weeklyInsightLlm).pipe(parser);
+
+      const insightResult = await chain.invoke({
+        articles_context: articlesContext,
+      });
+
+      await this.weeklyInsightModel.findOneAndUpdate(
+        { weekStart: weekStartString },
+        {
+          $set: {
+            insights: insightResult,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+        },
+      );
+
+      this.logger.log(
+        `✅ Successfully processed and saved Weekly Insights for ${weekStartString} to ${weekEndString}.`,
+      );
+    } catch (error) {
+      this.logger.error('Failed to process Weekly Insights:', error.stack);
     }
   }
 
@@ -380,6 +489,124 @@ export class ProcessorService {
       createdAt: latestPulse.createdAt.toISOString(),
       hype: enrichedHype,
       fud: enrichedFud,
+    };
+  }
+
+  async getLatestEnrichedWeeklyInsight(): Promise<EnrichedWeeklyInsightDto | null> {
+    // 1. Fetch the single most recent insight from the database
+    const latestInsight = (await this.weeklyInsightModel
+      .findOne()
+      .sort({ createdAt: -1 }) // Use createdAt to get the true latest
+      .exec()) as WeeklyInsightDocument;
+
+    if (!latestInsight) {
+      this.logger.warn('No weekly insight found in the database.');
+      return null;
+    }
+
+    // 2. Collect all unique cryptocurrency NAMES from insights
+    const allEntries = [
+      ...latestInsight.insights.topTrends,
+      ...latestInsight.insights.emergingCoins,
+    ];
+    const uniqueCryptoNames = [
+      ...new Set(allEntries.map((entry) => entry.name)),
+    ];
+
+    if (uniqueCryptoNames.length === 0) {
+      return {
+        _id: latestInsight._id.toString(),
+        weekStart: latestInsight.weekStart,
+        createdAt: latestInsight.createdAt.toISOString(),
+        insights: {
+          topTrends: latestInsight.insights.topTrends,
+          emergingCoins: latestInsight.insights.emergingCoins,
+        },
+      };
+    }
+
+    this.logger.log(`Searching for IDs for: ${uniqueCryptoNames.join(', ')}`);
+    const searchPromises = uniqueCryptoNames.map((name) =>
+      this.searchCoins(name).then((res) =>
+        res ? { ...res, queryName: name } : null,
+      ),
+    );
+    const searchResults = await Promise.all(searchPromises);
+
+    // Build a map from the original query name -> search result (if any)
+    const queryToSearchResult = new Map<
+      string,
+      { id: string; name: string; queryName: string; large: string }
+    >();
+    searchResults.forEach((sr) => {
+      if (sr && sr.queryName) queryToSearchResult.set(sr.queryName, sr);
+    });
+
+    // Collect unique CoinGecko IDs we actually found
+    const cryptoIds = Array.from(
+      new Set(Array.from(queryToSearchResult.values()).map((sr) => sr.id)),
+    );
+
+    if (cryptoIds.length === 0) {
+      this.logger.warn('Could not find IDs for any of the crypto names.');
+      return {
+        _id: latestInsight._id.toString(),
+        weekStart: latestInsight.weekStart,
+        createdAt: latestInsight.createdAt.toISOString(),
+        insights: {
+          topTrends: latestInsight.insights.topTrends,
+          emergingCoins: latestInsight.insights.emergingCoins,
+        },
+      };
+    }
+
+    // 3. Fetch Phase: get market data by ID and build id -> crypto map
+    this.logger.log(`Fetching market data for IDs: ${cryptoIds.join(', ')}`);
+
+    const idToCrypto = await this.getCoinsMarketData(cryptoIds);
+
+    // 4. Enrich entries using the original query -> id map, then id -> crypto map
+    const enrich = (entry) => {
+      const sr = queryToSearchResult.get(entry.name); // entry.name is what was in the insight (e.g. "DOGE")
+      if (!sr) {
+        // no search result for this original name
+        this.logger.warn(
+          `CoinGecko search found no results for: "${entry.name}"`,
+        );
+        return { ...entry, marketData: null };
+      }
+
+      const crypto = idToCrypto.get(sr.id) || null;
+      if (!crypto) {
+        this.logger.warn(
+          `Found ID (${sr.id}) for "${entry.name}" but market fetch returned no data.`,
+        );
+      }
+
+      const finalMarketData = {
+        ...crypto,
+        large: sr.large,
+      };
+
+      return { ...entry, marketData: finalMarketData };
+    };
+
+    const enrichedTopTrends = latestInsight.insights.topTrends.map((e) =>
+      enrich(e),
+    );
+    const enrichedEmergingCoins = latestInsight.insights.emergingCoins.map(
+      (e) => enrich(e),
+    );
+
+    // 5. Return the final, combined DTO
+    return {
+      _id: latestInsight._id.toString(),
+      weekStart: latestInsight.weekStart,
+      createdAt: latestInsight.createdAt.toISOString(),
+      insights: {
+        topTrends: enrichedTopTrends,
+        emergingCoins: enrichedEmergingCoins,
+      },
     };
   }
 }
