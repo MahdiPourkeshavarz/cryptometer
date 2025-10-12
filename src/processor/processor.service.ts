@@ -593,9 +593,6 @@ export class ProcessorService {
       return { ...entry, marketData: finalMarketData };
     };
 
-    const enrichedTopTrends = latestInsight.insights.topTrends.map((e) =>
-      enrich(e),
-    );
     const enrichedEmergingCoins = latestInsight.insights.emergingCoins.map(
       (e) => enrich(e),
     );
@@ -606,7 +603,7 @@ export class ProcessorService {
       weekStart: latestInsight.weekStart,
       createdAt: latestInsight.createdAt.toISOString(),
       insights: {
-        topTrends: enrichedTopTrends,
+        topTrends: latestInsight.insights.topTrends,
         emergingCoins: enrichedEmergingCoins,
       },
     };
