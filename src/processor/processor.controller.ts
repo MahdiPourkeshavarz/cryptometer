@@ -1,4 +1,5 @@
 /* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/require-await */
 import { Controller, Get } from '@nestjs/common';
 import { ProcessorService } from './processor.service';
 
@@ -14,5 +15,23 @@ export class ProcessorController {
   @Get('insight')
   async getWeeklyInsight() {
     return this.processorService.getLatestEnrichedWeeklyInsight();
+  }
+
+  @Get('article')
+  async getArticleProcessed() {
+    this.processorService.processDailyArticles();
+    return {
+      message:
+        'processing job triggered. Check the server logs and your database for results.',
+    };
+  }
+
+  @Get('week')
+  async getInsightProcess() {
+    this.processorService.processWeeklyInsights();
+    return {
+      message:
+        'processing insight job triggered. Check the server logs and your database for results.',
+    };
   }
 }

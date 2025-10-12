@@ -123,8 +123,9 @@ export class ProcessorService {
 
         **Output Instructions:**
         1.  After calculating all scores, determine the top 2 for Hype and top 2 for FUD.
-        2.  For each of the top coins, provide an insightful, one-sentence **reasoning** that summarizes *why* it scored high, referencing key themes from the news (e.g., "High score driven by recurring positive mentions of its mainnet upgrade.").
-        3.  Return your final analysis ONLY in the required JSON format.
+        2.  Always use the short name for each crypto for the sake of consistency.
+        3.  For each of the top coins, provide an insightful, one-sentence **reasoning** that summarizes *why* it scored high, referencing key themes from the news (e.g., "High score driven by recurring positive mentions of its mainnet upgrade.").
+        4.  Return your final analysis ONLY in the required JSON format.
 
         **ARTICLES FOR ANALYSIS:**
         ---
@@ -273,8 +274,9 @@ export class ProcessorService {
 
         **Output Instructions:**
         1.  After analysis, determine top 2 trends and top 2 emerging coins (expand as criteria refine).
-        2.  For each, provide an insightful, one-sentence **reasoning** summarizing key weekly developments.
-        3.  Return your final analysis ONLY as valid JSON in this exact format (no code blocks, no extra text):
+        2.  Always use the short name for each crypto for the sake of consistency.
+        3.  For each, provide an insightful, one-sentence **reasoning** summarizing key weekly developments.
+        4.  Return your final analysis ONLY as valid JSON in this exact format (no code blocks, no extra text):
         {{"topTrends": [{{"name": "Trend Name", "score": 50, "reasoning": "One-sentence reason."}}, ...], "emergingCoins": [{{"name": "Coin Name", "score": 50, "reasoning": "One-sentence reason."}}, ...]}}
 
         **ARTICLES FOR ANALYSIS (Past Week):**
