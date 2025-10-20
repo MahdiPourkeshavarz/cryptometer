@@ -29,12 +29,20 @@ import {
 } from './schema/weekly-insight.schema';
 import { EnrichedWeeklyInsightDto } from './dto/enriched-weekly-insight.dto';
 import { JsonOutputParser } from '@langchain/core/output_parsers';
+import { LLM_OPTIONS } from './constants/daily.analysis.option';
+import { DAILY_ANALYSIS_PROMPT } from './constants/daily-analysis.prompt';
+import { WEEKLY_ANALYSIS_PROMPT } from './constants/weekly-analysis.prompt';
+import {
+  MARKET_PROMPT_MOOD,
+  SentimentAnalysis,
+} from './constants/market-mood.prompt';
+import { MarketMood, MarketMoodDocument } from './schema/market-mood.schema';
 
 @Injectable()
 export class ProcessorService {
   private readonly logger = new Logger(ProcessorService.name);
-  private readonly llm: ChatOpenAI;
-  private readonly weeklyInsightLlm: ChatGoogleGenerativeAI;
+  private readonly openAi: ChatOpenAI;
+  private readonly gemini: ChatGoogleGenerativeAI;
   private readonly baseUrl = 'https://api.coingecko.com/api/v3';
   private readonly apiKey: string;
 
@@ -48,13 +56,15 @@ export class ProcessorService {
     @Inject(CACHE_MANAGER) private cacheManager: Cache,
     @InjectModel(WeeklyInsight.name)
     private readonly weeklyInsightModel: Model<WeeklyInsightDocument>,
+    @InjectModel(MarketMood.name)
+    private readonly moodModel: Model<MarketMoodDocument>,
   ) {
-    this.llm = new ChatOpenAI({
+    this.openAi = new ChatOpenAI({
       apiKey: configService.get<string>('OPENAI_API_KEY'),
       model: 'gpt-4o-mini',
       temperature: 0,
     });
-    this.weeklyInsightLlm = new ChatGoogleGenerativeAI({
+    this.gemini = new ChatGoogleGenerativeAI({
       apiKey: configService.get<string>('GOOGLE_API_KEY'),
       model: 'gemini-2.0-flash',
       temperature: 0.1,
@@ -99,95 +109,9 @@ export class ProcessorService {
 
       const parser = new JsonOutputToolsParser();
 
-      const prompt = PromptTemplate.fromTemplate(
-        `**Persona:** You are an expert crypto market analyst.
+      const prompt = PromptTemplate.fromTemplate(DAILY_ANALYSIS_PROMPT);
 
-        **Primary Goal:** Analyze the provided news articles to identify the top 2 "Hype" and top 2 "FUD" cryptocurrencies. You must calculate scores based on the strict rules below and provide a concise, insightful reason for each score.
-
-        **Scoring Algorithm (Apply meticulously):**
-
-        **Hype Points:**
-        - **+3:** For each mention in a **title**.
-        - **+2:** For each mention in a **summary**.
-        - **+1:** If the article has an overall sentiment score > 80% positive.
-
-        **FUD Points:**
-        - **+3:** If mentioned in a **title** with negative sentiment.
-        - **+2:** If mentioned in a **summary** with negative sentiment.
-        - **+1:** If the article has an overall sentiment score > 80% negative.
-
-        **Global Bonuses (Apply once per crypto after analyzing all articles):**
-        - **+5 Hype Bonus:** If mentioned in more than 4 articles total.
-        - **+5 FUD Bonus:** If mentioned in more than 3 articles with negative sentiment.
-        - **+7 Hype Bonus:** If it is a low market-cap coin (i.e., not Bitcoin or Ethereum) receiving significant attention.
-
-        **Output Instructions:**
-        1.  After calculating all scores, determine the top 2 for Hype and top 2 for FUD.
-        2.  Always use the short name for each crypto for the sake of consistency.
-        3.  For each of the top coins, provide an insightful, one-sentence **reasoning** that summarizes *why* it scored high, referencing key themes from the news (e.g., "High score driven by recurring positive mentions of its mainnet upgrade.").
-        4.  Return your final analysis ONLY in the required JSON format.
-
-        **ARTICLES FOR ANALYSIS:**
-        ---
-        {articles_context}
-        ---
-        `,
-      );
-
-      const toolCallingModel = this.llm.bind({
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: 'hype_fud_output',
-              description: 'Formats the Hype and FUD analysis.',
-              parameters: {
-                type: 'object',
-                properties: {
-                  hype: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        name: { type: 'string' },
-                        score: { type: 'number' },
-                        reasoning: {
-                          type: 'string',
-                          description:
-                            'Insightful one-sentence reason for the score.',
-                        },
-                      },
-                      required: ['name', 'score', 'reasoning'],
-                    },
-                  },
-                  fud: {
-                    type: 'array',
-                    items: {
-                      type: 'object',
-                      properties: {
-                        name: { type: 'string' },
-                        score: { type: 'number' },
-                        reasoning: {
-                          type: 'string',
-                          description:
-                            'Insightful one-sentence reason for the score.',
-                        },
-                      },
-                      required: ['name', 'score', 'reasoning'],
-                    },
-                  },
-                },
-                required: ['hype', 'fud'],
-              },
-            },
-          },
-        ],
-        // This forces the model to use our defined tool
-        tool_choice: {
-          type: 'function',
-          function: { name: 'hype_fud_output' },
-        },
-      });
+      const toolCallingModel = this.openAi.bind(LLM_OPTIONS);
 
       // 4. Create the chain with the tool-calling model
       const chain = prompt.pipe(toolCallingModel).pipe(parser);
@@ -254,41 +178,11 @@ export class ProcessorService {
         )
         .join('\n---\n');
 
-      const prompt = PromptTemplate.fromTemplate(
-        `**Persona:** You are an expert crypto market analyst specializing in weekly overviews.
-
-        **Primary Goal:** Analyze the provided news articles from the past week to generate insightful weekly summaries. Identify top trends, emerging coins, and other key insights based on aggregated data. Refine scoring criteria as needed for depth.
-
-        **Scoring Algorithm (Apply meticulously, edit/improve as criteria evolve):**
-
-        **Trend/Emerging Points (Example - Refine):**
-        - **+4:** For recurring themes across multiple sources.
-        - **+3:** For mentions in titles/summaries with high impact.
-        - **+2:** For positive/negative sentiment clusters.
-        - **+1:** For article volume on the topic.
-
-        **Global Bonuses (Apply once per item after analyzing all articles):**
-        - **+10 Bonus:** For sudden spikes in mentions (e.g., >10 articles).
-        - **+7 Bonus:** For low-cap or new coins gaining traction.
-        - **+5 Bonus:** For cross-source validation.
-
-        **Output Instructions:**
-        1.  After analysis, determine top 2 trends and top 2 emerging coins (expand as criteria refine).
-        2.  Always use the short name for each crypto for the sake of consistency.
-        3.  For each, provide an insightful, one-sentence **reasoning** summarizing key weekly developments.
-        4.  Return your final analysis ONLY as valid JSON in this exact format (no code blocks, no extra text):
-        {{"topTrends": [{{"name": "Trend Name", "score": 50, "reasoning": "One-sentence reason."}}, ...], "emergingCoins": [{{"name": "Coin Name", "score": 50, "reasoning": "One-sentence reason."}}, ...]}}
-
-        **ARTICLES FOR ANALYSIS (Past Week):**
-        ---
-        {articles_context}
-        ---
-        `,
-      );
+      const prompt = PromptTemplate.fromTemplate(WEEKLY_ANALYSIS_PROMPT);
 
       const parser = new JsonOutputParser();
 
-      const chain = prompt.pipe(this.weeklyInsightLlm).pipe(parser);
+      const chain = prompt.pipe(this.gemini).pipe(parser);
 
       const insightResult = await chain.invoke({
         articles_context: articlesContext,
@@ -313,6 +207,148 @@ export class ProcessorService {
     } catch (error) {
       this.logger.error('Failed to process Weekly Insights:', error.stack);
     }
+  }
+
+  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  async analyzeAndStoreDailySentiment() {
+    this.logger.log('🚀 Starting daily crypto market sentiment analysis...');
+
+    try {
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setDate(twentyFourHoursAgo.getDate() - 1);
+      const dateString = new Date().toISOString().split('T')[0];
+
+      // 1. FETCH
+      const articles = await this.articleModel
+        .find({ createdAt: { $gte: twentyFourHoursAgo } })
+        .exec();
+
+      if (articles.length === 0) {
+        this.logger.warn('No articles found in the last 24 hours to analyze.');
+        return;
+      }
+
+      this.logger.log(`Analyzing ${articles.length} articles...`);
+
+      // 2. MAP (Analyze in Batches)
+      const sentimentResults = await this.analyzeAllArticles(articles);
+
+      // 3. REDUCE (Calculate Final Score)
+      const finalScore = this.calculateDailyMoodIndex(sentimentResults);
+
+      // 4. STORE
+      await this.moodModel.updateOne(
+        { date: dateString },
+        { $set: { score: finalScore } },
+        { upsert: true },
+      );
+
+      this.logger.log(
+        `✅ Successfully calculated and stored Daily Mood Index for ${dateString}: ${finalScore}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        'An error occurred during the daily sentiment analysis job:',
+        error.stack,
+      );
+    }
+  }
+
+  private async analyzeAllArticles(
+    articles: ArticleDocument[],
+  ): Promise<SentimentAnalysis[]> {
+    const BATCH_SIZE = 10; // Process 10 articles concurrently to respect API limits
+    let allResults: SentimentAnalysis[] = [];
+
+    for (let i = 0; i < articles.length; i += BATCH_SIZE) {
+      const batch = articles.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map((article) =>
+        this.getArticleSentiment(article.headline, article.summary),
+      );
+      const batchResults = await Promise.all(batchPromises);
+      allResults = allResults.concat(batchResults);
+
+      // Optional: A small delay between batches can add extra safety
+      if (i + BATCH_SIZE < articles.length) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+    return allResults;
+  }
+
+  private async getArticleSentiment(
+    title: string,
+    summary: string,
+  ): Promise<SentimentAnalysis> {
+    const parser = new JsonOutputParser<SentimentAnalysis>();
+
+    const prompt = PromptTemplate.fromTemplate(MARKET_PROMPT_MOOD);
+
+    try {
+      const chain = prompt.pipe(this.gemini).pipe(parser);
+      return await chain.invoke({ title, summary });
+    } catch (error) {
+      this.logger.warn(
+        `Failed to analyze sentiment for article: "${title}". Defaulting to neutral.`,
+        error.message,
+      );
+      return { sentiment: 'neutral', confidence: 0, subject: 'Unknown' };
+    }
+  }
+
+  private calculateDailyMoodIndex(results: SentimentAnalysis[]): number {
+    // --- Tunable Parameters ---
+    const DEAD_ZONE_THRESHOLD = 30;
+    const EXPONENT = 2;
+    // New Parameter: The percentage of scores to trim from each end. 0.1 = 10%
+    const TRIM_PERCENTAGE = 0.1;
+
+    const impactfulScores: number[] = [];
+
+    for (const result of results) {
+      if (
+        result.sentiment === 'neutral' ||
+        result.confidence < DEAD_ZONE_THRESHOLD
+      ) {
+        continue;
+      }
+      const direction = result.sentiment === 'positive' ? 1 : -1;
+      const normalizedConfidence =
+        (result.confidence - DEAD_ZONE_THRESHOLD) / (100 - DEAD_ZONE_THRESHOLD);
+      const magnitude = Math.pow(normalizedConfidence, EXPONENT);
+      impactfulScores.push(direction * magnitude);
+    }
+
+    if (impactfulScores.length === 0) {
+      return 50; // Neutral
+    }
+
+    // --- NEW: TRIMMED MEAN LOGIC ---
+
+    // 1. Sort the scores from lowest to highest
+    impactfulScores.sort((a, b) => a - b);
+
+    // 2. Determine how many items to trim from each end
+    const trimCount = Math.floor(impactfulScores.length * TRIM_PERCENTAGE);
+
+    // 3. Create a new array with the trimmed values
+    const trimmedScores = impactfulScores.slice(
+      trimCount,
+      impactfulScores.length - trimCount,
+    );
+
+    if (trimmedScores.length === 0) {
+      // This can happen if we trim everything, so fall back to a neutral score
+      return 50;
+    }
+
+    // 4. Calculate the mean of ONLY the trimmed array
+    const totalScore = trimmedScores.reduce((sum, score) => sum + score, 0);
+    const averageImpact = totalScore / trimmedScores.length;
+    // --- END OF NEW LOGIC ---
+
+    const moodIndex = (averageImpact + 1) * 50;
+    return Math.round(moodIndex);
   }
 
   private async getCoinsMarketData(
