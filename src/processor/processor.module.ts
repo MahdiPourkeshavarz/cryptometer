@@ -11,6 +11,7 @@ import {
   WeeklyInsight,
   WeeklyInsightSchema,
 } from './schema/weekly-insight.schema';
+import { MarketMood, MarketMoodSchema } from './schema/market-mood.schema';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import {
       { name: Article.name, schema: ArticleSchema },
       { name: MarketPulse.name, schema: MarketPulseSchema },
       { name: WeeklyInsight.name, schema: WeeklyInsightSchema },
+      { name: MarketMood.name, schema: MarketMoodSchema },
     ]),
   ],
   providers: [ProcessorService],
