@@ -34,4 +34,9 @@ export class ProcessorController {
         'processing insight job triggered. Check the server logs and your database for results.',
     };
   }
+
+  @Get('mood')
+  async getDailyMood() {
+    return this.processorService.analyzeAndStoreDailySentiment();
+  }
 }
