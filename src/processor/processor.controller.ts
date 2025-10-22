@@ -37,6 +37,6 @@ export class ProcessorController {
 
   @Get('mood')
   async getDailyMood() {
-    return this.processorService.analyzeAndStoreDailySentiment();
+    return this.processorService.getLatestDailySentiment();
   }
 }

@@ -6,7 +6,8 @@ import { ValidationPipe } from '@nestjs/common';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({
-    origin: 'https://cryptometer-web.vercel.app',
+    origin: 'http://localhost:3000',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
   app.useGlobalPipes(
@@ -17,8 +18,8 @@ async function bootstrap() {
     }),
   );
   const port = process.env.PORT || 10000;
-  await app.listen(port, '0.0.0.0');
+  await app.listen(port);
 
-  console.log(`Application is running on: http://0.0.0.0:${port}`);
+  console.log(`Application is running on: ${port}`);
 }
 bootstrap();

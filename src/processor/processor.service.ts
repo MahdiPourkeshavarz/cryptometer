@@ -1,4 +1,5 @@
 /* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/no-require-imports */
 /* eslint-disable @typescript-eslint/restrict-template-expressions */
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
@@ -33,6 +34,7 @@ import { LLM_OPTIONS } from './constants/daily.analysis.option';
 import { DAILY_ANALYSIS_PROMPT } from './constants/daily-analysis.prompt';
 import { WEEKLY_ANALYSIS_PROMPT } from './constants/weekly-analysis.prompt';
 import {
+  BatchSentimentAnalysis,
   MARKET_PROMPT_MOOD,
   SentimentAnalysis,
 } from './constants/market-mood.prompt';
@@ -209,9 +211,11 @@ export class ProcessorService {
     }
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_4_HOURS)
   async analyzeAndStoreDailySentiment() {
-    this.logger.log('🚀 Starting daily crypto market sentiment analysis...');
+    this.logger.log(
+      '🚀 Starting daily crypto market sentiment analysis (BATCH MODE)...',
+    );
 
     try {
       const twentyFourHoursAgo = new Date();
@@ -228,15 +232,33 @@ export class ProcessorService {
         return;
       }
 
-      this.logger.log(`Analyzing ${articles.length} articles...`);
+      this.logger.log(
+        `Analyzing ${articles.length} articles in a single batch...`,
+      );
 
-      // 2. MAP (Analyze in Batches)
-      const sentimentResults = await this.analyzeAllArticles(articles);
+      // 2. MAP (Consolidate into one string)
+      const articlesContext = articles
+        .map((a) => `Headline: ${a.headline}\nSummary: ${a.summary}`)
+        .join('\n---\n'); // Separate articles with a clear delimiter
 
-      // 3. REDUCE (Calculate Final Score)
+      // 3. SINGLE LLM CALL
+      const parser = new JsonOutputParser<BatchSentimentAnalysis>();
+      const prompt = PromptTemplate.fromTemplate(MARKET_PROMPT_MOOD);
+      const chain = prompt.pipe(this.gemini).pipe(parser);
+
+      const batchResult = await chain.invoke({
+        articles_context: articlesContext,
+      });
+
+      const sentimentResults: SentimentAnalysis[] = batchResult.analyses;
+
+      this.logger.log(
+        `Received sentiment analyses for ${sentimentResults.length} articles.`,
+      );
+
       const finalScore = this.calculateDailyMoodIndex(sentimentResults);
 
-      // 4. STORE
+      // 5. STORE
       await this.moodModel.updateOne(
         { date: dateString },
         { $set: { score: finalScore } },
@@ -251,48 +273,6 @@ export class ProcessorService {
         'An error occurred during the daily sentiment analysis job:',
         error.stack,
       );
-    }
-  }
-
-  private async analyzeAllArticles(
-    articles: ArticleDocument[],
-  ): Promise<SentimentAnalysis[]> {
-    const BATCH_SIZE = 10; // Process 10 articles concurrently to respect API limits
-    let allResults: SentimentAnalysis[] = [];
-
-    for (let i = 0; i < articles.length; i += BATCH_SIZE) {
-      const batch = articles.slice(i, i + BATCH_SIZE);
-      const batchPromises = batch.map((article) =>
-        this.getArticleSentiment(article.headline, article.summary),
-      );
-      const batchResults = await Promise.all(batchPromises);
-      allResults = allResults.concat(batchResults);
-
-      // Optional: A small delay between batches can add extra safety
-      if (i + BATCH_SIZE < articles.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    }
-    return allResults;
-  }
-
-  private async getArticleSentiment(
-    title: string,
-    summary: string,
-  ): Promise<SentimentAnalysis> {
-    const parser = new JsonOutputParser<SentimentAnalysis>();
-
-    const prompt = PromptTemplate.fromTemplate(MARKET_PROMPT_MOOD);
-
-    try {
-      const chain = prompt.pipe(this.gemini).pipe(parser);
-      return await chain.invoke({ title, summary });
-    } catch (error) {
-      this.logger.warn(
-        `Failed to analyze sentiment for article: "${title}". Defaulting to neutral.`,
-        error.message,
-      );
-      return { sentiment: 'neutral', confidence: 0, subject: 'Unknown' };
     }
   }
 
@@ -531,7 +511,6 @@ export class ProcessorService {
   }
 
   async getLatestEnrichedWeeklyInsight(): Promise<EnrichedWeeklyInsightDto | null> {
-    // 1. Fetch the single most recent insight from the database
     const latestInsight = (await this.weeklyInsightModel
       .findOne()
       .sort({ createdAt: -1 }) // Use createdAt to get the true latest
@@ -542,106 +521,27 @@ export class ProcessorService {
       return null;
     }
 
-    // 2. Collect all unique cryptocurrency NAMES from insights
-    const allEntries = [
-      ...latestInsight.insights.topTrends,
-      ...latestInsight.insights.emergingCoins,
-    ];
-    const uniqueCryptoNames = [
-      ...new Set(allEntries.map((entry) => entry.name)),
-    ];
-
-    if (uniqueCryptoNames.length === 0) {
-      return {
-        _id: latestInsight._id.toString(),
-        weekStart: latestInsight.weekStart,
-        createdAt: latestInsight.createdAt.toISOString(),
-        insights: {
-          topTrends: latestInsight.insights.topTrends,
-          emergingCoins: latestInsight.insights.emergingCoins,
-        },
-      };
-    }
-
-    this.logger.log(`Searching for IDs for: ${uniqueCryptoNames.join(', ')}`);
-    const searchPromises = uniqueCryptoNames.map((name) =>
-      this.searchCoins(name).then((res) =>
-        res ? { ...res, queryName: name } : null,
-      ),
-    );
-    const searchResults = await Promise.all(searchPromises);
-
-    // Build a map from the original query name -> search result (if any)
-    const queryToSearchResult = new Map<
-      string,
-      { id: string; name: string; queryName: string; large: string }
-    >();
-    searchResults.forEach((sr) => {
-      if (sr && sr.queryName) queryToSearchResult.set(sr.queryName, sr);
-    });
-
-    // Collect unique CoinGecko IDs we actually found
-    const cryptoIds = Array.from(
-      new Set(Array.from(queryToSearchResult.values()).map((sr) => sr.id)),
-    );
-
-    if (cryptoIds.length === 0) {
-      this.logger.warn('Could not find IDs for any of the crypto names.');
-      return {
-        _id: latestInsight._id.toString(),
-        weekStart: latestInsight.weekStart,
-        createdAt: latestInsight.createdAt.toISOString(),
-        insights: {
-          topTrends: latestInsight.insights.topTrends,
-          emergingCoins: latestInsight.insights.emergingCoins,
-        },
-      };
-    }
-
-    // 3. Fetch Phase: get market data by ID and build id -> crypto map
-    this.logger.log(`Fetching market data for IDs: ${cryptoIds.join(', ')}`);
-
-    const idToCrypto = await this.getCoinsMarketData(cryptoIds);
-
-    // 4. Enrich entries using the original query -> id map, then id -> crypto map
-    const enrich = (entry) => {
-      const sr = queryToSearchResult.get(entry.name); // entry.name is what was in the insight (e.g. "DOGE")
-      if (!sr) {
-        // no search result for this original name
-        this.logger.warn(
-          `CoinGecko search found no results for: "${entry.name}"`,
-        );
-        return { ...entry, marketData: null };
-      }
-
-      const crypto = idToCrypto.get(sr.id) || null;
-      if (!crypto) {
-        this.logger.warn(
-          `Found ID (${sr.id}) for "${entry.name}" but market fetch returned no data.`,
-        );
-      }
-
-      const finalMarketData = {
-        ...crypto,
-        large: sr.large,
-      };
-
-      return { ...entry, marketData: finalMarketData };
-    };
-
-    const enrichedEmergingCoins = latestInsight.insights.emergingCoins.map(
-      (e) => enrich(e),
-    );
-
-    // 5. Return the final, combined DTO
     return {
       _id: latestInsight._id.toString(),
       weekStart: latestInsight.weekStart,
       createdAt: latestInsight.createdAt.toISOString(),
       insights: {
         topTrends: latestInsight.insights.topTrends,
-        emergingCoins: enrichedEmergingCoins,
+        emergingCoins: latestInsight.insights.emergingCoins,
       },
     };
+  }
+
+  async getLatestDailySentiment() {
+    const latestMood = (await this.moodModel
+      .findOne()
+      .sort({ createdAt: -1 })
+      .exec()) as MarketMoodDocument;
+
+    if (!latestMood) {
+      this.logger.warn('No market mood found in the database.');
+      return null;
+    }
+    return latestMood;
   }
 }
