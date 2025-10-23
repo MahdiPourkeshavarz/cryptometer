@@ -39,4 +39,9 @@ export class ProcessorController {
   async getDailyMood() {
     return this.processorService.getLatestDailySentiment();
   }
+
+  @Get('impactful')
+  async getImpactfulNews() {
+    return this.processorService.getLatestImpactfulNews();
+  }
 }

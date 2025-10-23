@@ -706,4 +706,17 @@ export class ProcessorService {
 
     return { flags, initialKeywordScore };
   }
+
+  async getLatestImpactfulNews() {
+    const latestImpactful = (await this.impactfullModel
+      .findOne()
+      .sort({ createdAt: -1 })
+      .exec()) as ImpactfulNewsDocument;
+
+    if (!latestImpactful) {
+      this.logger.warn('No market mood found in the database.');
+      return null;
+    }
+    return latestImpactful;
+  }
 }
