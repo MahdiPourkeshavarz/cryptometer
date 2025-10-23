@@ -12,6 +12,10 @@ import {
   WeeklyInsightSchema,
 } from './schema/weekly-insight.schema';
 import { MarketMood, MarketMoodSchema } from './schema/market-mood.schema';
+import {
+  ImpactfulNews,
+  ImpactfulNewsSchema,
+} from './schema/impactful-events.schema';
 
 @Module({
   imports: [
@@ -22,6 +26,7 @@ import { MarketMood, MarketMoodSchema } from './schema/market-mood.schema';
       { name: MarketPulse.name, schema: MarketPulseSchema },
       { name: WeeklyInsight.name, schema: WeeklyInsightSchema },
       { name: MarketMood.name, schema: MarketMoodSchema },
+      { name: ImpactfulNews.name, schema: ImpactfulNewsSchema },
     ]),
   ],
   providers: [ProcessorService],

@@ -39,6 +39,19 @@ import {
   SentimentAnalysis,
 } from './constants/market-mood.prompt';
 import { MarketMood, MarketMoodDocument } from './schema/market-mood.schema';
+import {
+  EnrichedArticle,
+  highImpactNegativeKeywords,
+  highImpactPositiveKeywords,
+  KeywordFlag,
+  macroKeywords,
+} from './constants/keywords';
+import { getKeywordScore } from './utils/keyword-scoring';
+import { impactfulEventsPrompt } from './constants/impactful-events.prompt';
+import {
+  ImpactfulNews,
+  ImpactfulNewsDocument,
+} from './schema/impactful-events.schema';
 
 @Injectable()
 export class ProcessorService {
@@ -60,6 +73,8 @@ export class ProcessorService {
     private readonly weeklyInsightModel: Model<WeeklyInsightDocument>,
     @InjectModel(MarketMood.name)
     private readonly moodModel: Model<MarketMoodDocument>,
+    @InjectModel(ImpactfulNews.name)
+    private readonly impactfullModel: Model<ImpactfulNewsDocument>,
   ) {
     this.openAi = new ChatOpenAI({
       apiKey: configService.get<string>('OPENAI_API_KEY'),
@@ -543,5 +558,152 @@ export class ProcessorService {
       return null;
     }
     return latestMood;
+  }
+
+  @Cron(CronExpression.EVERY_4_HOURS)
+  async identifyImpactfulNews() {
+    this.logger.log(
+      '🤖 Starting impactful news identification (JS Pre-processing + AI Synthesis)...',
+    );
+
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setDate(twentyFourHoursAgo.getDate() - 1);
+    const dateString = new Date().toISOString().split('T')[0];
+
+    // 1. FETCH
+    const articles = await this.articleModel
+      .find({ createdAt: { $gte: twentyFourHoursAgo } })
+      .exec();
+
+    // --- STAGE 1: JAVASCRIPT PRE-PROCESSING ---
+    this.logger.log(
+      `Pre-processing ${articles.length} articles with keyword scoring...`,
+    );
+    const enrichedArticles: EnrichedArticle[] = articles.map((article) => {
+      const { flags, initialKeywordScore } = this.calculateInitialScoreAndFlags(
+        {
+          headline: article.headline,
+          summary: article.summary,
+        },
+      );
+      const overallImportanceScore = this.calculateOverallImportanceScore(
+        initialKeywordScore,
+        flags,
+      );
+
+      return {
+        headline: article.headline,
+        summary: article.summary,
+        source: article.source,
+        flags: flags, // The detailed flags array
+        initialKeywordScore: initialKeywordScore, // Score just from keywords
+        overallImportanceScore: overallImportanceScore, // Final JS calculated score
+      };
+    });
+
+    enrichedArticles.sort(
+      (a, b) => b.overallImportanceScore - a.overallImportanceScore,
+    );
+
+    // 4. Format Input for AI (including the new scores/flags)
+    const articlesContext = enrichedArticles
+      .map(
+        (a) =>
+          `---\nHeadline: ${a.headline}\nSummary: ${a.summary}\nSource: ${a.source}\nImportanceScore: ${a.overallImportanceScore}\nFlags: ${a.flags.map((f) => f.keyword).join(', ')}\n---`,
+      )
+      .join('\n'); // Pass the calculated score and keywords
+
+    this.logger.log('Sending enriched data to AI for synthesis...');
+
+    try {
+      const parser = new JsonOutputParser();
+      const prompt = PromptTemplate.fromTemplate(impactfulEventsPrompt);
+      const chain = prompt.pipe(this.gemini).pipe(parser); // Use Gemini
+
+      const result: any = await chain.invoke({
+        articles_context: articlesContext,
+      });
+
+      const negativeImpactNews = result.negativeImpactNews;
+      const positiveImpactNews = result.positiveImpactNews;
+
+      await this.impactfullModel.updateOne(
+        { date: dateString },
+        { $set: { positiveImpactNews, negativeImpactNews } },
+        { upsert: true },
+      );
+      this.logger.log('✅ Successfully identified and saved impactful news.');
+    } catch (error) {
+      this.logger.error('Failed during AI synthesis stage:', error.stack);
+    }
+  }
+
+  private calculateOverallImportanceScore(
+    initialScore: number,
+    flags: KeywordFlag[],
+  ): number {
+    let score = initialScore;
+
+    // Define weights for different flag categories
+    const weights = { positive: 1.0, negative: 1.3, macro: 1.7 };
+    let maxWeight = 1.0;
+    let hasMacro = false;
+
+    flags.forEach((flag) => {
+      maxWeight = Math.max(maxWeight, weights[flag.category]);
+      if (flag.category === 'macro') hasMacro = true;
+    });
+
+    // Apply the highest weight found
+    score *= maxWeight;
+
+    // Bonus for multiple distinct flags
+    const uniqueKeywordsCount = flags.length;
+    if (uniqueKeywordsCount >= 3) score *= 1.2;
+    else if (uniqueKeywordsCount === 2) score *= 1.1;
+
+    // Specific bonus if a macro keyword was present
+    if (hasMacro) score *= 1.3;
+
+    return Math.round(score);
+  }
+
+  private calculateInitialScoreAndFlags(article: {
+    headline: string;
+    summary: string;
+  }): { flags: KeywordFlag[]; initialKeywordScore: number } {
+    const text = `${article.headline} ${article.summary}`;
+    const foundKeywords = new Set<string>();
+    const flags: KeywordFlag[] = [];
+    let initialKeywordScore = 0;
+
+    const checkAndAdd = (
+      keyword: string,
+      category: 'positive' | 'negative' | 'macro',
+      list: string[],
+    ) => {
+      if (text.includes(keyword) && !foundKeywords.has(keyword)) {
+        let scoreContribution = getKeywordScore(keyword, list);
+        // Title Bonus
+        if (article.headline.includes(keyword)) {
+          scoreContribution *= 1.5;
+        }
+        scoreContribution = Math.round(scoreContribution); // Keep scores clean
+
+        flags.push({ keyword, category, scoreContribution });
+        initialKeywordScore += scoreContribution;
+        foundKeywords.add(keyword);
+      }
+    };
+
+    highImpactPositiveKeywords.forEach((kw) =>
+      checkAndAdd(kw, 'positive', highImpactPositiveKeywords),
+    );
+    highImpactNegativeKeywords.forEach((kw) =>
+      checkAndAdd(kw, 'negative', highImpactNegativeKeywords),
+    );
+    macroKeywords.forEach((kw) => checkAndAdd(kw, 'macro', macroKeywords));
+
+    return { flags, initialKeywordScore };
   }
 }
