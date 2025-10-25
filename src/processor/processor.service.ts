@@ -52,6 +52,11 @@ import {
   ImpactfulNews,
   ImpactfulNewsDocument,
 } from './schema/impactful-events.schema';
+import {
+  SourceRanking,
+  SourceRankingDocument,
+} from './schema/source-ranking.schema';
+import { WEEKLY_SOURCE_RANKING_PROMPT } from './constants/weekly-source-prompt';
 
 @Injectable()
 export class ProcessorService {
@@ -75,6 +80,8 @@ export class ProcessorService {
     private readonly moodModel: Model<MarketMoodDocument>,
     @InjectModel(ImpactfulNews.name)
     private readonly impactfullModel: Model<ImpactfulNewsDocument>,
+    @InjectModel(SourceRanking.name)
+    private readonly sourceRankingModel: Model<SourceRankingDocument>,
   ) {
     this.openAi = new ChatOpenAI({
       apiKey: configService.get<string>('OPENAI_API_KEY'),
@@ -87,6 +94,96 @@ export class ProcessorService {
       temperature: 0.1,
     });
     this.apiKey = this.configService.get<string>('COINGECKO_API_KEY') as string;
+  }
+
+  @Cron('0 0 * * 0') // Every Sunday at 1 AM
+  async processWeeklySourceRanking() {
+    this.logger.log(
+      '🏆 Starting Weekly Source Ranking job (Single AI Call)...',
+    );
+
+    const sixDaysAgo = new Date();
+    sixDaysAgo.setDate(sixDaysAgo.getDate() - 6);
+    const weekStartString = sixDaysAgo.toISOString().split('T')[0];
+
+    try {
+      const articles = await this.articleModel
+        .find({ createdAt: { $gte: sixDaysAgo } })
+        .select('headline summary source') // Select necessary fields
+        .exec();
+
+      // Set a reasonable minimum threshold for analysis
+      if (articles.length < 50) {
+        this.logger.warn(
+          `Not enough articles (${articles.length}) in the last week for a meaningful source ranking. Minimum required: 50.`,
+        );
+        return;
+      }
+
+      this.logger.log(
+        `Analyzing all ${articles.length} articles from the past week for source ranking...`,
+      );
+
+      // Format all articles for the single prompt context
+      const articlesContext = articles
+        .map(
+          (a) =>
+            `Source: ${a.source}\nHeadline: ${a.headline}\nSummary: ${a.summary}`,
+        )
+        .join('\n---\n');
+
+      // Use the engineered prompt below (WEEKLY_SOURCE_RANKING_PROMPT)
+      const prompt = PromptTemplate.fromTemplate(WEEKLY_SOURCE_RANKING_PROMPT);
+      const parser = new JsonOutputParser(); // Use JsonOutputParser for Gemini
+      const chain = prompt.pipe(this.gemini).pipe(parser);
+
+      this.logger.log(
+        'Sending articles to Gemini for scoring and aggregation...',
+      );
+
+      // Single AI Call to perform all steps
+      const rankingResult = (await chain.invoke({
+        articles_context: articlesContext,
+      })) as {
+        bestSource: { name: string; finalScore: number };
+        worstSource: { name: string; finalScore: number };
+      };
+
+      // Validate the result structure (basic check)
+      if (
+        !rankingResult ||
+        !rankingResult.bestSource ||
+        !rankingResult.worstSource
+      ) {
+        throw new Error(
+          'AI response did not contain the expected bestSource and worstSource fields.',
+        );
+      }
+
+      // Save the result from the AI directly
+      await this.sourceRankingModel.findOneAndUpdate(
+        { weekStart: weekStartString },
+        {
+          $set: {
+            bestSource: rankingResult.bestSource,
+            worstSource: rankingResult.worstSource,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+        },
+      );
+
+      this.logger.log(
+        `✅ Successfully processed and saved Weekly Source Rankings for week starting ${weekStartString}. Best: ${rankingResult.bestSource.name} (${rankingResult.bestSource.finalScore}), Worst: ${rankingResult.worstSource.name} (${rankingResult.worstSource.finalScore})`,
+      );
+    } catch (error) {
+      this.logger.error(
+        'Failed to process Weekly Source Rankings:',
+        error.stack,
+      );
+    }
   }
 
   @Cron(CronExpression.EVERY_2_HOURS)

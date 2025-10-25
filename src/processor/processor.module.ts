@@ -16,6 +16,10 @@ import {
   ImpactfulNews,
   ImpactfulNewsSchema,
 } from './schema/impactful-events.schema';
+import {
+  SourceRanking,
+  SourceRankingSchema,
+} from './schema/source-ranking.schema';
 
 @Module({
   imports: [
@@ -27,6 +31,7 @@ import {
       { name: WeeklyInsight.name, schema: WeeklyInsightSchema },
       { name: MarketMood.name, schema: MarketMoodSchema },
       { name: ImpactfulNews.name, schema: ImpactfulNewsSchema },
+      { name: SourceRanking.name, schema: SourceRankingSchema },
     ]),
   ],
   providers: [ProcessorService],
