@@ -1,4 +1,5 @@
 /* eslint-disable prettier/prettier */
+/* eslint-disable @typescript-eslint/no-require-imports */
 /* eslint-disable @typescript-eslint/restrict-template-expressions */
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
@@ -33,10 +34,29 @@ import { LLM_OPTIONS } from './constants/daily.analysis.option';
 import { DAILY_ANALYSIS_PROMPT } from './constants/daily-analysis.prompt';
 import { WEEKLY_ANALYSIS_PROMPT } from './constants/weekly-analysis.prompt';
 import {
+  BatchSentimentAnalysis,
   MARKET_PROMPT_MOOD,
   SentimentAnalysis,
 } from './constants/market-mood.prompt';
 import { MarketMood, MarketMoodDocument } from './schema/market-mood.schema';
+import {
+  EnrichedArticle,
+  highImpactNegativeKeywords,
+  highImpactPositiveKeywords,
+  KeywordFlag,
+  macroKeywords,
+} from './constants/keywords';
+import { getKeywordScore } from './utils/keyword-scoring';
+import { impactfulEventsPrompt } from './constants/impactful-events.prompt';
+import {
+  ImpactfulNews,
+  ImpactfulNewsDocument,
+} from './schema/impactful-events.schema';
+import {
+  SourceRanking,
+  SourceRankingDocument,
+} from './schema/source-ranking.schema';
+import { WEEKLY_SOURCE_RANKING_PROMPT } from './constants/weekly-source-prompt';
 
 @Injectable()
 export class ProcessorService {
@@ -58,6 +78,10 @@ export class ProcessorService {
     private readonly weeklyInsightModel: Model<WeeklyInsightDocument>,
     @InjectModel(MarketMood.name)
     private readonly moodModel: Model<MarketMoodDocument>,
+    @InjectModel(ImpactfulNews.name)
+    private readonly impactfullModel: Model<ImpactfulNewsDocument>,
+    @InjectModel(SourceRanking.name)
+    private readonly sourceRankingModel: Model<SourceRankingDocument>,
   ) {
     this.openAi = new ChatOpenAI({
       apiKey: configService.get<string>('OPENAI_API_KEY'),
@@ -70,6 +94,96 @@ export class ProcessorService {
       temperature: 0.1,
     });
     this.apiKey = this.configService.get<string>('COINGECKO_API_KEY') as string;
+  }
+
+  @Cron('0 0 * * 0') // Every Sunday at 1 AM
+  async processWeeklySourceRanking() {
+    this.logger.log(
+      '🏆 Starting Weekly Source Ranking job (Single AI Call)...',
+    );
+
+    const sixDaysAgo = new Date();
+    sixDaysAgo.setDate(sixDaysAgo.getDate() - 6);
+    const weekStartString = sixDaysAgo.toISOString().split('T')[0];
+
+    try {
+      const articles = await this.articleModel
+        .find({ createdAt: { $gte: sixDaysAgo } })
+        .select('headline summary source') // Select necessary fields
+        .exec();
+
+      // Set a reasonable minimum threshold for analysis
+      if (articles.length < 50) {
+        this.logger.warn(
+          `Not enough articles (${articles.length}) in the last week for a meaningful source ranking. Minimum required: 50.`,
+        );
+        return;
+      }
+
+      this.logger.log(
+        `Analyzing all ${articles.length} articles from the past week for source ranking...`,
+      );
+
+      // Format all articles for the single prompt context
+      const articlesContext = articles
+        .map(
+          (a) =>
+            `Source: ${a.source}\nHeadline: ${a.headline}\nSummary: ${a.summary}`,
+        )
+        .join('\n---\n');
+
+      // Use the engineered prompt below (WEEKLY_SOURCE_RANKING_PROMPT)
+      const prompt = PromptTemplate.fromTemplate(WEEKLY_SOURCE_RANKING_PROMPT);
+      const parser = new JsonOutputParser(); // Use JsonOutputParser for Gemini
+      const chain = prompt.pipe(this.gemini).pipe(parser);
+
+      this.logger.log(
+        'Sending articles to Gemini for scoring and aggregation...',
+      );
+
+      // Single AI Call to perform all steps
+      const rankingResult = (await chain.invoke({
+        articles_context: articlesContext,
+      })) as {
+        bestSource: { name: string; finalScore: number };
+        worstSource: { name: string; finalScore: number };
+      };
+
+      // Validate the result structure (basic check)
+      if (
+        !rankingResult ||
+        !rankingResult.bestSource ||
+        !rankingResult.worstSource
+      ) {
+        throw new Error(
+          'AI response did not contain the expected bestSource and worstSource fields.',
+        );
+      }
+
+      // Save the result from the AI directly
+      await this.sourceRankingModel.findOneAndUpdate(
+        { weekStart: weekStartString },
+        {
+          $set: {
+            bestSource: rankingResult.bestSource,
+            worstSource: rankingResult.worstSource,
+          },
+        },
+        {
+          upsert: true,
+          new: true,
+        },
+      );
+
+      this.logger.log(
+        `✅ Successfully processed and saved Weekly Source Rankings for week starting ${weekStartString}. Best: ${rankingResult.bestSource.name} (${rankingResult.bestSource.finalScore}), Worst: ${rankingResult.worstSource.name} (${rankingResult.worstSource.finalScore})`,
+      );
+    } catch (error) {
+      this.logger.error(
+        'Failed to process Weekly Source Rankings:',
+        error.stack,
+      );
+    }
   }
 
   @Cron(CronExpression.EVERY_2_HOURS)
@@ -86,7 +200,7 @@ export class ProcessorService {
       const articles = await this.articleModel
         .find({ createdAt: { $gte: twentyFourHoursAgo } })
         .sort({ createdAt: -1 })
-        .limit(124)
+        .limit(105)
         .exec();
 
       if (articles.length < 5) {
@@ -209,9 +323,11 @@ export class ProcessorService {
     }
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_1AM)
+  @Cron(CronExpression.EVERY_4_HOURS)
   async analyzeAndStoreDailySentiment() {
-    this.logger.log('🚀 Starting daily crypto market sentiment analysis...');
+    this.logger.log(
+      '🚀 Starting daily crypto market sentiment analysis (BATCH MODE)...',
+    );
 
     try {
       const twentyFourHoursAgo = new Date();
@@ -228,15 +344,33 @@ export class ProcessorService {
         return;
       }
 
-      this.logger.log(`Analyzing ${articles.length} articles...`);
+      this.logger.log(
+        `Analyzing ${articles.length} articles in a single batch...`,
+      );
 
-      // 2. MAP (Analyze in Batches)
-      const sentimentResults = await this.analyzeAllArticles(articles);
+      // 2. MAP (Consolidate into one string)
+      const articlesContext = articles
+        .map((a) => `Headline: ${a.headline}\nSummary: ${a.summary}`)
+        .join('\n---\n'); // Separate articles with a clear delimiter
 
-      // 3. REDUCE (Calculate Final Score)
+      // 3. SINGLE LLM CALL
+      const parser = new JsonOutputParser<BatchSentimentAnalysis>();
+      const prompt = PromptTemplate.fromTemplate(MARKET_PROMPT_MOOD);
+      const chain = prompt.pipe(this.gemini).pipe(parser);
+
+      const batchResult = await chain.invoke({
+        articles_context: articlesContext,
+      });
+
+      const sentimentResults: SentimentAnalysis[] = batchResult.analyses;
+
+      this.logger.log(
+        `Received sentiment analyses for ${sentimentResults.length} articles.`,
+      );
+
       const finalScore = this.calculateDailyMoodIndex(sentimentResults);
 
-      // 4. STORE
+      // 5. STORE
       await this.moodModel.updateOne(
         { date: dateString },
         { $set: { score: finalScore } },
@@ -251,48 +385,6 @@ export class ProcessorService {
         'An error occurred during the daily sentiment analysis job:',
         error.stack,
       );
-    }
-  }
-
-  private async analyzeAllArticles(
-    articles: ArticleDocument[],
-  ): Promise<SentimentAnalysis[]> {
-    const BATCH_SIZE = 10; // Process 10 articles concurrently to respect API limits
-    let allResults: SentimentAnalysis[] = [];
-
-    for (let i = 0; i < articles.length; i += BATCH_SIZE) {
-      const batch = articles.slice(i, i + BATCH_SIZE);
-      const batchPromises = batch.map((article) =>
-        this.getArticleSentiment(article.headline, article.summary),
-      );
-      const batchResults = await Promise.all(batchPromises);
-      allResults = allResults.concat(batchResults);
-
-      // Optional: A small delay between batches can add extra safety
-      if (i + BATCH_SIZE < articles.length) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    }
-    return allResults;
-  }
-
-  private async getArticleSentiment(
-    title: string,
-    summary: string,
-  ): Promise<SentimentAnalysis> {
-    const parser = new JsonOutputParser<SentimentAnalysis>();
-
-    const prompt = PromptTemplate.fromTemplate(MARKET_PROMPT_MOOD);
-
-    try {
-      const chain = prompt.pipe(this.gemini).pipe(parser);
-      return await chain.invoke({ title, summary });
-    } catch (error) {
-      this.logger.warn(
-        `Failed to analyze sentiment for article: "${title}". Defaulting to neutral.`,
-        error.message,
-      );
-      return { sentiment: 'neutral', confidence: 0, subject: 'Unknown' };
     }
   }
 
@@ -531,7 +623,6 @@ export class ProcessorService {
   }
 
   async getLatestEnrichedWeeklyInsight(): Promise<EnrichedWeeklyInsightDto | null> {
-    // 1. Fetch the single most recent insight from the database
     const latestInsight = (await this.weeklyInsightModel
       .findOne()
       .sort({ createdAt: -1 }) // Use createdAt to get the true latest
@@ -542,106 +633,199 @@ export class ProcessorService {
       return null;
     }
 
-    // 2. Collect all unique cryptocurrency NAMES from insights
-    const allEntries = [
-      ...latestInsight.insights.topTrends,
-      ...latestInsight.insights.emergingCoins,
-    ];
-    const uniqueCryptoNames = [
-      ...new Set(allEntries.map((entry) => entry.name)),
-    ];
-
-    if (uniqueCryptoNames.length === 0) {
-      return {
-        _id: latestInsight._id.toString(),
-        weekStart: latestInsight.weekStart,
-        createdAt: latestInsight.createdAt.toISOString(),
-        insights: {
-          topTrends: latestInsight.insights.topTrends,
-          emergingCoins: latestInsight.insights.emergingCoins,
-        },
-      };
-    }
-
-    this.logger.log(`Searching for IDs for: ${uniqueCryptoNames.join(', ')}`);
-    const searchPromises = uniqueCryptoNames.map((name) =>
-      this.searchCoins(name).then((res) =>
-        res ? { ...res, queryName: name } : null,
-      ),
-    );
-    const searchResults = await Promise.all(searchPromises);
-
-    // Build a map from the original query name -> search result (if any)
-    const queryToSearchResult = new Map<
-      string,
-      { id: string; name: string; queryName: string; large: string }
-    >();
-    searchResults.forEach((sr) => {
-      if (sr && sr.queryName) queryToSearchResult.set(sr.queryName, sr);
-    });
-
-    // Collect unique CoinGecko IDs we actually found
-    const cryptoIds = Array.from(
-      new Set(Array.from(queryToSearchResult.values()).map((sr) => sr.id)),
-    );
-
-    if (cryptoIds.length === 0) {
-      this.logger.warn('Could not find IDs for any of the crypto names.');
-      return {
-        _id: latestInsight._id.toString(),
-        weekStart: latestInsight.weekStart,
-        createdAt: latestInsight.createdAt.toISOString(),
-        insights: {
-          topTrends: latestInsight.insights.topTrends,
-          emergingCoins: latestInsight.insights.emergingCoins,
-        },
-      };
-    }
-
-    // 3. Fetch Phase: get market data by ID and build id -> crypto map
-    this.logger.log(`Fetching market data for IDs: ${cryptoIds.join(', ')}`);
-
-    const idToCrypto = await this.getCoinsMarketData(cryptoIds);
-
-    // 4. Enrich entries using the original query -> id map, then id -> crypto map
-    const enrich = (entry) => {
-      const sr = queryToSearchResult.get(entry.name); // entry.name is what was in the insight (e.g. "DOGE")
-      if (!sr) {
-        // no search result for this original name
-        this.logger.warn(
-          `CoinGecko search found no results for: "${entry.name}"`,
-        );
-        return { ...entry, marketData: null };
-      }
-
-      const crypto = idToCrypto.get(sr.id) || null;
-      if (!crypto) {
-        this.logger.warn(
-          `Found ID (${sr.id}) for "${entry.name}" but market fetch returned no data.`,
-        );
-      }
-
-      const finalMarketData = {
-        ...crypto,
-        large: sr.large,
-      };
-
-      return { ...entry, marketData: finalMarketData };
-    };
-
-    const enrichedEmergingCoins = latestInsight.insights.emergingCoins.map(
-      (e) => enrich(e),
-    );
-
-    // 5. Return the final, combined DTO
     return {
       _id: latestInsight._id.toString(),
       weekStart: latestInsight.weekStart,
       createdAt: latestInsight.createdAt.toISOString(),
       insights: {
         topTrends: latestInsight.insights.topTrends,
-        emergingCoins: enrichedEmergingCoins,
+        emergingCoins: latestInsight.insights.emergingCoins,
       },
     };
+  }
+
+  async getLatestDailySentiment() {
+    const latestMood = (await this.moodModel
+      .findOne()
+      .sort({ createdAt: -1 })
+      .exec()) as MarketMoodDocument;
+
+    if (!latestMood) {
+      this.logger.warn('No market mood found in the database.');
+      return null;
+    }
+    return latestMood;
+  }
+
+  @Cron(CronExpression.EVERY_4_HOURS)
+  async identifyImpactfulNews() {
+    this.logger.log(
+      '🤖 Starting impactful news identification (JS Pre-processing + AI Synthesis)...',
+    );
+
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setDate(twentyFourHoursAgo.getDate() - 1);
+    const dateString = new Date().toISOString().split('T')[0];
+
+    // 1. FETCH
+    const articles = await this.articleModel
+      .find({ createdAt: { $gte: twentyFourHoursAgo } })
+      .exec();
+
+    // --- STAGE 1: JAVASCRIPT PRE-PROCESSING ---
+    this.logger.log(
+      `Pre-processing ${articles.length} articles with keyword scoring...`,
+    );
+    const enrichedArticles: EnrichedArticle[] = articles.map((article) => {
+      const { flags, initialKeywordScore } = this.calculateInitialScoreAndFlags(
+        {
+          headline: article.headline,
+          summary: article.summary,
+        },
+      );
+      const overallImportanceScore = this.calculateOverallImportanceScore(
+        initialKeywordScore,
+        flags,
+      );
+
+      return {
+        headline: article.headline,
+        summary: article.summary,
+        source: article.source,
+        flags: flags, // The detailed flags array
+        initialKeywordScore: initialKeywordScore, // Score just from keywords
+        overallImportanceScore: overallImportanceScore, // Final JS calculated score
+      };
+    });
+
+    enrichedArticles.sort(
+      (a, b) => b.overallImportanceScore - a.overallImportanceScore,
+    );
+
+    // 4. Format Input for AI (including the new scores/flags)
+    const articlesContext = enrichedArticles
+      .map(
+        (a) =>
+          `---\nHeadline: ${a.headline}\nSummary: ${a.summary}\nSource: ${a.source}\nImportanceScore: ${a.overallImportanceScore}\nFlags: ${a.flags.map((f) => f.keyword).join(', ')}\n---`,
+      )
+      .join('\n'); // Pass the calculated score and keywords
+
+    this.logger.log('Sending enriched data to AI for synthesis...');
+
+    try {
+      const parser = new JsonOutputParser();
+      const prompt = PromptTemplate.fromTemplate(impactfulEventsPrompt);
+      const chain = prompt.pipe(this.gemini).pipe(parser); // Use Gemini
+
+      const result: any = await chain.invoke({
+        articles_context: articlesContext,
+      });
+
+      const negativeImpactNews = result.negativeImpactNews;
+      const positiveImpactNews = result.positiveImpactNews;
+
+      await this.impactfullModel.updateOne(
+        { date: dateString },
+        { $set: { positiveImpactNews, negativeImpactNews } },
+        { upsert: true },
+      );
+      this.logger.log('✅ Successfully identified and saved impactful news.');
+    } catch (error) {
+      this.logger.error('Failed during AI synthesis stage:', error.stack);
+    }
+  }
+
+  private calculateOverallImportanceScore(
+    initialScore: number,
+    flags: KeywordFlag[],
+  ): number {
+    let score = initialScore;
+
+    // Define weights for different flag categories
+    const weights = { positive: 1.0, negative: 1.3, macro: 1.7 };
+    let maxWeight = 1.0;
+    let hasMacro = false;
+
+    flags.forEach((flag) => {
+      maxWeight = Math.max(maxWeight, weights[flag.category]);
+      if (flag.category === 'macro') hasMacro = true;
+    });
+
+    // Apply the highest weight found
+    score *= maxWeight;
+
+    // Bonus for multiple distinct flags
+    const uniqueKeywordsCount = flags.length;
+    if (uniqueKeywordsCount >= 3) score *= 1.2;
+    else if (uniqueKeywordsCount === 2) score *= 1.1;
+
+    // Specific bonus if a macro keyword was present
+    if (hasMacro) score *= 1.3;
+
+    return Math.round(score);
+  }
+
+  private calculateInitialScoreAndFlags(article: {
+    headline: string;
+    summary: string;
+  }): { flags: KeywordFlag[]; initialKeywordScore: number } {
+    const text = `${article.headline} ${article.summary}`;
+    const foundKeywords = new Set<string>();
+    const flags: KeywordFlag[] = [];
+    let initialKeywordScore = 0;
+
+    const checkAndAdd = (
+      keyword: string,
+      category: 'positive' | 'negative' | 'macro',
+      list: string[],
+    ) => {
+      if (text.includes(keyword) && !foundKeywords.has(keyword)) {
+        let scoreContribution = getKeywordScore(keyword, list);
+        // Title Bonus
+        if (article.headline.includes(keyword)) {
+          scoreContribution *= 1.5;
+        }
+        scoreContribution = Math.round(scoreContribution); // Keep scores clean
+
+        flags.push({ keyword, category, scoreContribution });
+        initialKeywordScore += scoreContribution;
+        foundKeywords.add(keyword);
+      }
+    };
+
+    highImpactPositiveKeywords.forEach((kw) =>
+      checkAndAdd(kw, 'positive', highImpactPositiveKeywords),
+    );
+    highImpactNegativeKeywords.forEach((kw) =>
+      checkAndAdd(kw, 'negative', highImpactNegativeKeywords),
+    );
+    macroKeywords.forEach((kw) => checkAndAdd(kw, 'macro', macroKeywords));
+
+    return { flags, initialKeywordScore };
+  }
+
+  async getLatestImpactfulNews() {
+    const latestImpactful = (await this.impactfullModel
+      .findOne()
+      .sort({ createdAt: -1 })
+      .exec()) as ImpactfulNewsDocument;
+
+    if (!latestImpactful) {
+      this.logger.warn('No market mood found in the database.');
+      return null;
+    }
+    return latestImpactful;
+  }
+
+  async getLatestSource() {
+    const latestSources = (await this.sourceRankingModel
+      .findOne()
+      .sort({ createAt: -1 })
+      .exec()) as SourceRankingDocument;
+
+    if (!latestSources) {
+      return;
+    }
+    return latestSources;
   }
 }
