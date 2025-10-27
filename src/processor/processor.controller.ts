@@ -44,4 +44,9 @@ export class ProcessorController {
   async getImpactfulNews() {
     return this.processorService.getLatestImpactfulNews();
   }
+
+  @Get('sources')
+  async getTopSources() {
+    return this.processorService.getLatestSource();
+  }
 }

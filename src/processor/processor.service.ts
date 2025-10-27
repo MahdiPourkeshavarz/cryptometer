@@ -200,7 +200,7 @@ export class ProcessorService {
       const articles = await this.articleModel
         .find({ createdAt: { $gte: twentyFourHoursAgo } })
         .sort({ createdAt: -1 })
-        .limit(124)
+        .limit(105)
         .exec();
 
       if (articles.length < 5) {
@@ -815,5 +815,17 @@ export class ProcessorService {
       return null;
     }
     return latestImpactful;
+  }
+
+  async getLatestSource() {
+    const latestSources = (await this.sourceRankingModel
+      .findOne()
+      .sort({ createAt: -1 })
+      .exec()) as SourceRankingDocument;
+
+    if (!latestSources) {
+      return;
+    }
+    return latestSources;
   }
 }
