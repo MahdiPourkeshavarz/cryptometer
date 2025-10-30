@@ -20,6 +20,8 @@ import {
   SourceRanking,
   SourceRankingSchema,
 } from './schema/source-ranking.schema';
+import { DailyProcessorService } from './daily-processor.service';
+import { WeeklyProcessorService } from './weekly-processor.service';
 
 @Module({
   imports: [
@@ -34,7 +36,7 @@ import {
       { name: SourceRanking.name, schema: SourceRankingSchema },
     ]),
   ],
-  providers: [ProcessorService],
+  providers: [ProcessorService, DailyProcessorService, WeeklyProcessorService],
   controllers: [ProcessorController],
 })
 export class ProcessorModule {}
