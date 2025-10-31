@@ -1,0 +1,28 @@
+{
+  "crons": [
+    {
+      "path": "/api/processor/cron/pulse",
+      "schedule": "0 */2 * * *"
+    },
+    {
+      "path": "/api/processor/cron/daily-sentiment",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/processor/cron/impactful-news",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/processor/cron/weekly-sources",
+      "schedule": "0 1 * * 0"
+    },
+    {
+      "path": "/api/processor/cron/weekly-insight",
+      "schedule": "0 1 * * 0"
+    },
+    {
+      "path": "/api/scraper/run",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
