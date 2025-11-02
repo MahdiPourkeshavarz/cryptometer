@@ -1,98 +1,298 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+markdown
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+# CryptoMeter - Backend API
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+A robust NestJS-based backend service for real-time cryptocurrency sentiment analysis, news aggregation, and market psychology tracking. Powered by AI (Google Gemini & LangChain) for intelligent data processing and insights generation.
 
-## Description
+## 🚀 Features
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+### Core Functionality
 
-## Project setup
+#### 1. **RSS News Scraping**
+
+- Multi-source RSS feed aggregation
+- Automated hourly scraping with cron jobs
+- Cheerio-based HTML parsing
+- Rate limiting and retry mechanisms
+- Source reliability tracking
+
+#### 2. **AI-Powered Sentiment Analysis**
+
+- **Hype Index**: Measures market enthusiasm and social buzz
+- **FUD Index**: Tracks fear, uncertainty, and doubt levels
+- Google Gemini AI integration for natural language processing
+- LangChain framework for prompt engineering
+- Real-time sentiment scoring (0-100 scale)
+
+#### 3. **Daily Processing Pipeline**
+
+- Article categorization and deduplication
+- Sentiment extraction and scoring
+- Impactful news identification
+- Keyword-based pre-filtering + AI synthesis
+- MongoDB storage with optimized schemas
+
+#### 4. **Weekly Analytics**
+
+- **Top Trends**: Highest performing cryptocurrencies
+- **Emerging Coins**: Rising stars identification
+- **Source Rankings**: Best and worst news sources
+- **Weekly Insights**: Comprehensive market analysis
+- Automated Sunday processing at 1 AM
+
+#### 5. **Cron Job Automation**
+
+- Scheduled tasks with `@nestjs/schedule`
+- Vercel cron integration for production
+- Configurable intervals for each job
+- Error handling and logging
+
+## 🛠️ Tech Stack
+
+### Framework & Core
+
+- **NestJS 11** - Progressive Node.js framework
+- **TypeScript** - Type-safe development
+- **MongoDB + Mongoose** - NoSQL database
+- **RxJS** - Reactive programming
+
+### AI & NLP
+
+- **@langchain/google-genai** - Google Gemini integration
+- **@langchain/core** - LangChain core utilities
+- **@langchain/langgraph** - Graph-based AI workflows
+- **Zod** - Schema validation for AI outputs
+
+### Scraping & Data
+
+- **Cheerio** - HTML parsing and DOM manipulation
+- **RSS Parser** - RSS feed parsing
+- **Axios** - HTTP client with retry logic
+- **async-retry** - Automatic retry mechanisms
+- **p-limit** - Concurrency control
+
+### Utilities
+
+- **class-validator** - DTO validation
+- **class-transformer** - Object transformation
+- **cache-manager** - Response caching
+- **@nestjs/config** - Environment configuration
+
+## 📁 Project Structure
+
+src/
+├── indicator/ # Sentiment indicators (Hype/FUD)
+│ └── mongoose/ # MongoDB schemas
+├── processor/ # Core processing logic
+│ ├── constants/ # Prompts and configurations
+│ ├── dto/ # Data transfer objects
+│ ├── schema/ # Mongoose schemas
+│ ├── utils/ # Helper utilities
+│ ├── daily-processor.service.ts # Daily analysis
+│ ├── processor.service.ts # Main processor
+│ ├── weekly-processor.service.ts # Weekly analytics
+│ ├── processor.controller.ts # API endpoints
+│ └── processor.module.ts # Module definition
+├── scraper/ # RSS scraping logic
+│ ├── schema/ # Article schema
+│ ├── scraper.controller.ts # Scraper endpoints
+│ ├── scraper.service.ts # Scraping logic
+│ └── scraper.module.ts # Module definition
+├── app.controller.ts # Root controller
+├── app.service.ts # Root service
+├── app.module.ts # Root module
+└── main.ts # Application entry point
+
+markdown
+
+## 🔧 Installation
+
+### Prerequisites
+
+- Node.js 18+
+- MongoDB Atlas account or local MongoDB
+- Google Gemini API key
+- CoinGecko API key
+- npm/yarn/pnpm
+
+### Setup
+
+**Install dependencies**
 
 ```bash
-$ npm install
+npm install
+
+
+Environment Configuration
+
+Create a .env file in the root directory:
+
+ini
+DATABASE_URL=your_mongodb_connection_string
+OPENAI_API_KEY=your_openai_api_key
+COINGECKO_API_KEY=your_coingecko_api_key
+GOOGLE_API_KEY=your_google_gemini_api_key
+
+
+Run the application
+
+Development:
+
+bash
+npm run start:dev
+
+
+Production:
+
+bash
+npm run build
+npm run start:prod
 ```
 
-## Compile and run the project
+## 📊 API Endpoints
 
-```bash
-# development
-$ npm run start
+Scraper Endpoints
+GET /api/scraper/run - Manually trigger RSS scraping
+Processor Endpoints
+GET /api/processor/hype - Get current hype index data
+GET /api/processor/fud - Get current FUD index data
+GET /api/processor/weekly-insights - Get weekly market analysis
+GET /api/processor/impactful-news - Get categorized impactful news
+GET /api/processor/top-sources - Get best and worst news sources
+Cron Endpoints (Internal - Triggered by Vercel)
+GET /api/cron/pulse - Process articles (Every 2 hours)
+GET /api/cron/daily-sentiment - Analyze sentiment (Every 4 hours)
+GET /api/cron/impactful-news - Identify impactful news (Every 4 hours)
+GET /api/cron/weekly-sources - Rank sources (Sunday 1 AM)
+GET /api/cron/weekly-insight - Generate insights (Sunday 1 AM)
 
-# watch mode
-$ npm run start:dev
+## 🤖 AI Processing Pipeline
 
-# production mode
-$ npm run start:prod
-```
+1. Article Scraping
 
-## Run tests
+RSS Feeds → Cheerio Parser → MongoDB Storage
 
-```bash
-# unit tests
-$ npm run test
+2. Sentiment Analysis
 
-# e2e tests
-$ npm run test:e2e
+Articles → Keyword Pre-filter → Gemini AI → Sentiment Score → Database
 
-# test coverage
-$ npm run test:cov
-```
+3. Impactful News Detection
 
-## Deployment
+Articles → Keyword Scoring → AI Synthesis → Categorization (Positive/Negative)
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+4. Weekly Insights
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Week’s Articles → LangChain Prompt → Gemini Analysis → Top Trends + Emerging Coins
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+5. Source Ranking
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Articles → Accuracy Scoring → Reliability Metrics → Best/Worst Sources
 
-## Resources
+## 📅 Cron Job Schedule
 
-Check out a few resources that may come in handy when working with NestJS:
+Job Schedule Description
+Article Processing Every 2 hours Scrapes and processes new articles
+Sentiment Analysis Every 4 hours Analyzes market sentiment
+Impactful News Every 4 hours Identifies market-moving news
+Source Ranking Sunday 1 AM Ranks news sources weekly
+Weekly Insights Sunday 1 AM Generates market insights
+RSS Scraping Every hour Fetches new articles from RSS feeds
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+## 🗄️ Database Schema
 
-## Support
+Article Schema
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+Stores scraped articles with title, link, content, source, and categories.
 
-## Stay in touch
+Sentiment Schema
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+Daily hype and FUD data with scores for each cryptocurrency.
 
-## License
+Weekly Insight Schema
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Top trends and emerging coins identified by AI analysis.
+
+Source Ranking Schema
+
+Best and worst performing news sources based on accuracy.
+
+Impactful News Schema
+
+Categorized positive and negative market-moving news articles.
+
+## 🔐 Security
+
+Environment Variables
+Never commit .env files to version control
+Use strong API keys
+Rotate secrets regularly
+Rate Limiting
+Built-in retry mechanisms
+Concurrency control with p-limit
+Exponential backoff for failed requests
+Data Validation
+Class-validator for DTOs
+Zod schemas for AI outputs
+Mongoose schema validation
+
+## 🚀 Deployment
+
+Vercel Deployment
+Push your code to GitHub
+Connect repository to Vercel
+Add environment variables in Vercel dashboard
+Create vercel.json for cron job configuration
+Deploy
+Environment Variables (Production)
+
+Set all required environment variables in Vercel dashboard:
+
+DATABASE_URL
+OPENAI_API_KEY
+COINGECKO_API_KEY
+GOOGLE_API_KEY
+
+## 📈 Performance Optimization
+
+Caching
+
+Response caching with cache-manager for frequently accessed data.
+
+Concurrency
+
+Controlled parallel processing with p-limit for efficient resource usage.
+
+Error Handling
+
+Automatic retry with exponential backoff and comprehensive error logging.
+
+## 🐛 Troubleshooting
+
+MongoDB Connection Issues
+
+Verify your DATABASE_URL is correct and MongoDB Atlas IP whitelist includes your deployment IP.
+
+API Key Errors
+
+Ensure all API keys are valid and have sufficient quota/credits.
+
+Cron Jobs Not Running
+
+Check Vercel logs and verify vercel.json configuration is correct.
+
+## 📚 Documentation
+
+NestJS Documentation
+LangChain JS Docs
+Google Gemini API
+MongoDB Docs
+
+## 📄 License
+
+MIT License
+
+## 📞 Support
+
+For support, contact the development team.
+
+Built with ❤️ for intelligent crypto analysis
