@@ -336,7 +336,7 @@ export class DailyProcessorService {
   async getLatestImpactfulNews() {
     const latestImpactfullNews = (await this.impactfullModel
       .findOne()
-      .sort({ createsAt: -1 })
+      .sort({ createdAt: -1 })
       .exec()) as ImpactfulNewsDocument;
 
     if (!latestImpactfullNews) {

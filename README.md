@@ -147,8 +147,10 @@ Production:
 bash
 npm run build
 npm run start:prod
+```
 
-📊 API Endpoints
+## 📊 API Endpoints
+
 Scraper Endpoints
 GET /api/scraper/run - Manually trigger RSS scraping
 Processor Endpoints
@@ -163,7 +165,9 @@ GET /api/cron/daily-sentiment - Analyze sentiment (Every 4 hours)
 GET /api/cron/impactful-news - Identify impactful news (Every 4 hours)
 GET /api/cron/weekly-sources - Rank sources (Sunday 1 AM)
 GET /api/cron/weekly-insight - Generate insights (Sunday 1 AM)
-🤖 AI Processing Pipeline
+
+## 🤖 AI Processing Pipeline
+
 1. Article Scraping
 
 RSS Feeds → Cheerio Parser → MongoDB Storage
@@ -184,15 +188,18 @@ Week’s Articles → LangChain Prompt → Gemini Analysis → Top Trends + Emer
 
 Articles → Accuracy Scoring → Reliability Metrics → Best/Worst Sources
 
-📅 Cron Job Schedule
-Job	Schedule	Description
-Article Processing	Every 2 hours	Scrapes and processes new articles
-Sentiment Analysis	Every 4 hours	Analyzes market sentiment
-Impactful News	Every 4 hours	Identifies market-moving news
-Source Ranking	Sunday 1 AM	Ranks news sources weekly
-Weekly Insights	Sunday 1 AM	Generates market insights
-RSS Scraping	Every hour	Fetches new articles from RSS feeds
-🗄️ Database Schema
+## 📅 Cron Job Schedule
+
+Job Schedule Description
+Article Processing Every 2 hours Scrapes and processes new articles
+Sentiment Analysis Every 4 hours Analyzes market sentiment
+Impactful News Every 4 hours Identifies market-moving news
+Source Ranking Sunday 1 AM Ranks news sources weekly
+Weekly Insights Sunday 1 AM Generates market insights
+RSS Scraping Every hour Fetches new articles from RSS feeds
+
+## 🗄️ Database Schema
+
 Article Schema
 
 Stores scraped articles with title, link, content, source, and categories.
@@ -213,7 +220,8 @@ Impactful News Schema
 
 Categorized positive and negative market-moving news articles.
 
-🔐 Security
+## 🔐 Security
+
 Environment Variables
 Never commit .env files to version control
 Use strong API keys
@@ -226,7 +234,9 @@ Data Validation
 Class-validator for DTOs
 Zod schemas for AI outputs
 Mongoose schema validation
-🚀 Deployment
+
+## 🚀 Deployment
+
 Vercel Deployment
 Push your code to GitHub
 Connect repository to Vercel
@@ -241,7 +251,9 @@ DATABASE_URL
 OPENAI_API_KEY
 COINGECKO_API_KEY
 GOOGLE_API_KEY
-📈 Performance Optimization
+
+## 📈 Performance Optimization
+
 Caching
 
 Response caching with cache-manager for frequently accessed data.
@@ -254,7 +266,8 @@ Error Handling
 
 Automatic retry with exponential backoff and comprehensive error logging.
 
-🐛 Troubleshooting
+## 🐛 Troubleshooting
+
 MongoDB Connection Issues
 
 Verify your DATABASE_URL is correct and MongoDB Atlas IP whitelist includes your deployment IP.
@@ -267,18 +280,19 @@ Cron Jobs Not Running
 
 Check Vercel logs and verify vercel.json configuration is correct.
 
-📚 Documentation
+## 📚 Documentation
+
 NestJS Documentation
 LangChain JS Docs
 Google Gemini API
 MongoDB Docs
-📄 License
+
+## 📄 License
 
 MIT License
 
-📞 Support
+## 📞 Support
 
 For support, contact the development team.
 
 Built with ❤️ for intelligent crypto analysis
-```
