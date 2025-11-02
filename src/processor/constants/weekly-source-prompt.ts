@@ -6,17 +6,17 @@ export const WEEKLY_SOURCE_RANKING_PROMPT = `
 **Step-by-Step Instructions (Perform Internally):**
 
 1.  **Score Each Article:** Read every article provided. For each one, assign:
-    * **Factuality Score (0-100):** Based on verifiable facts vs. opinion.
-        * 100 (Verifiable Fact): Confirmed events (e.g., "SEC approves," "hacked for," "upgrade live").
-        * 75 (Strongly Sourced): Cites data, metrics, named sources.
-        * 50 (Mixed/Opinion): Analyst opinion *with some* data.
-        * 25 (Pure Speculation): Opinion/prediction *without* evidence.
+    * **Factuality Score (0-50):** Based on verifiable facts vs. opinion.
+        * 50 (Verifiable Fact): Confirmed events (e.g., "SEC approves," "hacked for," "upgrade live").
+        * 37 (Strongly Sourced): Cites data, metrics, named sources.
+        * 25 (Mixed/Opinion): Analyst opinion *with some* data.
+        *15 (Pure Speculation): Opinion/prediction *without* evidence.
         * 0 (Misinformation): False claims.
-    * **Quality Score (0-100):** Based on objectivity and writing quality.
-        * 100 (Objective & High Quality): Neutral, factual, no hype.
-        * 75 (Mostly Objective): Slight bias possible.
-        * 50 (Biased / Persuasive): Uses hype words (e.g., "soaring," "massive").
-        * 25 (Clickbait / Low Quality): Exaggerated language (e.g., "Will Change Everything!").
+    * **Quality Score (0-50):** Based on objectivity and writing quality.
+        * 50 (Objective & High Quality): Neutral, factual, no hype.
+        * 37 (Mostly Objective): Slight bias possible.
+        * 25 (Biased / Persuasive): Uses hype words (e.g., "soaring," "massive").
+        * 15 (Clickbait / Low Quality): Exaggerated language (e.g., "Will Change Everything!").
         * 0 (Spam / Malicious).
 
 2.  **Group Scores by Source:** Mentally collect all Factuality and Quality scores assigned in Step 1, grouping them by the 'Source' field of each article.
@@ -26,7 +26,7 @@ export const WEEKLY_SOURCE_RANKING_PROMPT = `
     * Calculate the average Quality Score for that source.
 
 4.  **Calculate Final Score per Source:** For each source processed in Step 3, calculate its 'finalScore' by summing its average Factuality Score and average Quality Score.
-    * 'finalScore = averageFactualityScore + averageQualityScore' (Potential range: 0-200).
+    * 'finalScore = averageFactualityScore + averageQualityScore' (Potential range: 0-100).
 
 5.  **Identify Best and Worst:**
     * Find the source with the **highest** 'finalScore'. This is the 'bestSource'.
