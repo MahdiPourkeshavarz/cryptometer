@@ -78,31 +78,6 @@ A robust NestJS-based backend service for real-time cryptocurrency sentiment ana
 - **cache-manager** - Response caching
 - **@nestjs/config** - Environment configuration
 
-## 📁 Project Structure
-
-src/
-├── indicator/ # Sentiment indicators (Hype/FUD)
-│ └── mongoose/ # MongoDB schemas
-├── processor/ # Core processing logic
-│ ├── constants/ # Prompts and configurations
-│ ├── dto/ # Data transfer objects
-│ ├── schema/ # Mongoose schemas
-│ ├── utils/ # Helper utilities
-│ ├── daily-processor.service.ts # Daily analysis
-│ ├── processor.service.ts # Main processor
-│ ├── weekly-processor.service.ts # Weekly analytics
-│ ├── processor.controller.ts # API endpoints
-│ └── processor.module.ts # Module definition
-├── scraper/ # RSS scraping logic
-│ ├── schema/ # Article schema
-│ ├── scraper.controller.ts # Scraper endpoints
-│ ├── scraper.service.ts # Scraping logic
-│ └── scraper.module.ts # Module definition
-├── app.controller.ts # Root controller
-├── app.service.ts # Root service
-├── app.module.ts # Root module
-└── main.ts # Application entry point
-
 markdown
 
 ## 🔧 Installation
