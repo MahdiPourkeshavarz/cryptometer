@@ -64,7 +64,7 @@ export class ProcessorService {
       const articles = await this.articleModel
         .find({ createdAt: { $gte: twentyFourHoursAgo } })
         .sort({ createdAt: -1 })
-        .limit(105)
+        .limit(108)
         .exec();
 
       if (articles.length < 5) {

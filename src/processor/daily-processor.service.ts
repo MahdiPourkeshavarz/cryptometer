@@ -59,13 +59,13 @@ export class DailyProcessorService {
     );
 
     try {
-      const twentyFourHoursAgo = new Date();
-      twentyFourHoursAgo.setDate(twentyFourHoursAgo.getDate() - 1);
+      const twentyEightHoursAgo = new Date();
+      twentyEightHoursAgo.setHours(twentyEightHoursAgo.getHours() - 28);
       const dateString = new Date().toISOString().split('T')[0];
 
       // 1. FETCH
       const articles = await this.articleModel
-        .find({ createdAt: { $gte: twentyFourHoursAgo } })
+        .find({ createdAt: { $gte: twentyEightHoursAgo } })
         .exec();
 
       if (articles.length === 0) {
